@@ -22,6 +22,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libpcap-dev libasound2-dev
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
@@ -33,6 +37,9 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Test without CGO
+        run: CGO_ENABLED=0 go test ./...
 
       - name: Test with race detector
         run: go test -race ./...

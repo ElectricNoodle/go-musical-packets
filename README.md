@@ -19,5 +19,9 @@ make race
 make vet
 make build
 ./bin/musical-packets version
+./bin/musical-packets interfaces
+./bin/musical-packets devices
 ```
 
+Native capture and MIDI prerequisites are documented in
+[docs/platform-spike.md](docs/platform-spike.md).

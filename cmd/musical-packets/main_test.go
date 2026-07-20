@@ -32,3 +32,16 @@ func TestRunRejectsUnknownCommand(t *testing.T) {
 		t.Fatalf("run() stderr = %q, want error", stderr.String())
 	}
 }
+
+func TestRunHelpListsDiscoveryCommands(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"help"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run() code = %d, want 0", code)
+	}
+	for _, command := range []string{"interfaces", "devices"} {
+		if !strings.Contains(stdout.String(), command) {
+			t.Errorf("help output = %q, want %q", stdout.String(), command)
+		}
+	}
+}
