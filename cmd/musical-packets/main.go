@@ -42,4 +42,3 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  version    print build version information")
 	fmt.Fprintln(w, "  help       print this help")
 }
-

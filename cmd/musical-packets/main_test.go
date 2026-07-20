@@ -32,4 +32,3 @@ func TestRunRejectsUnknownCommand(t *testing.T) {
 		t.Fatalf("run() stderr = %q, want error", stderr.String())
 	}
 }
-
