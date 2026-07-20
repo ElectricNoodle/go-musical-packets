@@ -15,6 +15,8 @@ var (
 	ErrUnsupportedPacket = errors.New("unsupported packet")
 	// ErrLiveCaptureUnavailable indicates that this build lacks a live backend.
 	ErrLiveCaptureUnavailable = errors.New("live packet capture is unavailable in this build")
+	// ErrSourceClosed indicates an attempted read after source closure.
+	ErrSourceClosed = errors.New("packet source is closed")
 )
 
 // Source yields normalized packets until closed or its context is canceled.
