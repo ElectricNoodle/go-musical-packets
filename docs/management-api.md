@@ -24,6 +24,9 @@ GET  /api/v1/status
 GET  /api/v1/config
 POST /api/v1/config/validate
 PUT  /api/v1/config
+GET  /api/v1/config/pending
+PUT  /api/v1/config/pending
+DELETE /api/v1/config/pending
 GET  /api/v1/interfaces
 GET  /api/v1/midi/devices
 POST /api/v1/midi/audition
@@ -71,6 +74,30 @@ current hot allowlist is:
 
 All other configuration fields require a process restart. Exact-flow rules are
 evaluated in the pinned tier ahead of broad user rules.
+
+### Configuration saved for restart
+
+`PUT /api/v1/config/pending` accepts the same complete strict YAML document as
+the active configuration endpoint. A new pending resource uses the active
+configuration ETag in `If-Match`; replacing it uses the pending resource ETag.
+The candidate must contain at least one restart-required difference. On
+success, the complete validated generation is durably written and returned as
+redacted YAML with its own strong ETag, but the active configuration, selector,
+and revision remain unchanged.
+
+`GET /api/v1/config/pending` returns that next-start generation or 404 when no
+restart is pending. `DELETE` requires its exact ETag, restores the complete
+active configuration as the durable startup generation, and returns the active
+document. The status representation reports `state: restart_pending` and a
+`pending_revision` while the resource exists. A process restart loads the
+durable generation normally and returns to `ready` state.
+
+Persisted active-configuration and rule writes are rejected with
+`restart_pending` until the process restarts or the pending resource is
+discarded. Temporary mute and solo overlays remain available, and operational
+readiness continues to describe the healthy active generation. This prevents a
+later hot write from accidentally overwriting fields already saved for the
+next process.
 
 ## Capture interfaces
 

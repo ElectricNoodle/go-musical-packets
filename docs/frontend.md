@@ -39,7 +39,7 @@ compile from a clean checkout before Vite runs.
 
 ## Setup assistant
 
-The first vertical slice loads status, the redacted canonical configuration,
+The setup assistant loads status, the redacted canonical configuration,
 capture-interface discovery, and cached MIDI discovery in parallel. It covers:
 
 - capture enablement, interface choice, and broad BPF editing;
@@ -47,11 +47,12 @@ capture-interface discovery, and cached MIDI discovery in parallel. It covers:
 - quiet-by-default selection plus global note-rate and polyphony limits;
 - authoritative server-side validation and optimistic live-safe apply.
 
-The active backend currently rejects configuration fields that require a
-process restart. The assistant therefore reports those fields explicitly and
-does not offer a false apply path. Completing configuration without replacing
-the YAML file manually requires a later stage-11 pending-configuration
-transaction that can persist a validated generation for the next restart.
+Live-safe drafts apply atomically to the active runtime. When validation finds
+restart-required fields, the assistant instead saves the complete generation
+through the pending-configuration resource. The saved draft survives browser
+reloads, can be updated under its own ETag or discarded, and becomes active on
+the next process start. The active status rail remains operational while making
+the pending restart explicit.
 
 Frontend tests use Vitest, jsdom, and Testing Library. They cover YAML/ETag
 transport, live-safe validation and apply, restart classification, MIDI panic,
@@ -109,6 +110,5 @@ the portable ordered rule array. Edit dialogs warn before discarding unsaved
 work and protect dirty forms from accidental navigation. Read-only runtimes
 remain inspectable and exportable while all write controls are disabled.
 
-Completing the setup assistant, including a pending-configuration transaction
-for validated restart-required changes, is the remaining stage-11 frontend
-work.
+Stage 11 is complete. The piano roll and musical viewer are the next frontend
+delivery stage.

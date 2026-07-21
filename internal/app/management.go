@@ -150,6 +150,9 @@ func (backend *managementBackend) Status(ctx context.Context) (managementapi.Sta
 		Writable: backend.controller.repository != nil,
 	}
 	switch snapshot.state {
+	case ControllerStateRestartPending:
+		status.PendingRevision = backend.revisions.issue(snapshot.pendingRevision)
+		status.Warning = "configuration is saved and will take effect after restart"
 	case ControllerStateDurabilityUncertain:
 		status.Warning = "configuration durability is uncertain"
 	case ControllerStateOutOfSync:
@@ -162,6 +165,27 @@ func (backend *managementBackend) Status(ctx context.Context) (managementapi.Sta
 		status.Warning = "runtime is starting or stopping"
 	}
 	return status, nil
+}
+
+func (backend *managementBackend) PendingConfig(ctx context.Context) (managementapi.ConfigDocument, error) {
+	if ctx == nil {
+		return managementapi.ConfigDocument{}, managementInvalid(errors.New("management pending configuration context is required"))
+	}
+	if err := ctx.Err(); err != nil {
+		return managementapi.ConfigDocument{}, err
+	}
+	pending, ok := backend.controller.Pending()
+	if !ok {
+		return managementapi.ConfigDocument{}, &managementapi.BackendError{
+			Kind:   managementapi.ErrorNotFound,
+			Code:   "pending_config_not_found",
+			Detail: "pending configuration was not found",
+		}
+	}
+	return managementapi.ConfigDocument{
+		Config:   pending.Config.Redacted(),
+		Revision: backend.revisions.issue(pending.Revision),
+	}, nil
 }
 
 func (backend *managementBackend) Config(ctx context.Context) (managementapi.ConfigDocument, error) {
@@ -185,7 +209,13 @@ func (backend *managementBackend) ValidateConfig(ctx context.Context, candidate 
 		return managementapi.Validation{}, err
 	}
 	current := backend.controller.store.current.Load()
-	resolved, err := config.ResolveRedacted(candidate, current.configuration)
+	secretBase := current.configuration
+	validationRevision := current.revision
+	if current.state == ControllerStateRestartPending && current.pendingRevision != "" {
+		secretBase = current.pendingConfiguration
+		validationRevision = current.pendingRevision
+	}
+	resolved, err := config.ResolveRedacted(candidate, secretBase)
 	if err != nil {
 		return managementapi.Validation{}, managementInvalid(err)
 	}
@@ -197,7 +227,7 @@ func (backend *managementBackend) ValidateConfig(ctx context.Context, candidate 
 		return managementapi.Validation{}, managementInvalid(err)
 	}
 	return managementapi.Validation{
-		Revision:              backend.revisions.issue(current.revision),
+		Revision:              backend.revisions.issue(validationRevision),
 		HotFields:             append(make([]string, 0, len(validation.HotFields)), validation.HotFields...),
 		RestartRequiredFields: append(make([]string, 0, len(validation.RestartRequiredFields)), validation.RestartRequiredFields...),
 	}, nil
@@ -255,6 +285,92 @@ func (backend *managementBackend) UpdateConfig(ctx context.Context, expected man
 	}, nil
 }
 
+func (backend *managementBackend) StageConfig(ctx context.Context, expected managementapi.Revision, candidate config.Config) (managementapi.ConfigDocument, error) {
+	if ctx == nil {
+		return managementapi.ConfigDocument{}, managementInvalid(errors.New("management pending configuration context is required"))
+	}
+	lifecycle := backend.lifecycle
+	if lifecycle == nil {
+		lifecycle = context.Background()
+	}
+	if !backend.ready.Load() || lifecycle.Err() != nil {
+		return managementapi.ConfigDocument{}, &managementapi.BackendError{
+			Kind:   managementapi.ErrorUnavailable,
+			Code:   "runtime_unavailable",
+			Detail: "runtime is starting or stopping",
+		}
+	}
+	current := backend.controller.Current()
+	secretBase := current.Config
+	if pending, ok := backend.controller.Pending(); ok {
+		secretBase = pending.Config
+	}
+	rawExpected := backend.revisions.resolve(expected, current.Revision)
+	resolved, err := config.ResolveRedacted(candidate, secretBase)
+	if err != nil {
+		return managementapi.ConfigDocument{}, managementInvalid(err)
+	}
+	if err := validateManagementSize(resolved); err != nil {
+		return managementapi.ConfigDocument{}, managementInvalid(err)
+	}
+	updateContext, cancelUpdate := context.WithCancel(lifecycle)
+	stopRequestCancellation := context.AfterFunc(ctx, cancelUpdate)
+	defer func() {
+		stopRequestCancellation()
+		cancelUpdate()
+	}()
+	if ctx.Err() != nil {
+		cancelUpdate()
+	}
+	if err := updateContext.Err(); err != nil {
+		return managementapi.ConfigDocument{}, backend.managementUpdateError(err)
+	}
+	pending, err := backend.controller.StageRestartContext(updateContext, rawExpected, resolved)
+	if err != nil {
+		return managementapi.ConfigDocument{}, backend.managementUpdateError(err)
+	}
+	return managementapi.ConfigDocument{
+		Config:   pending.Config.Redacted(),
+		Revision: backend.revisions.issue(pending.Revision),
+	}, nil
+}
+
+func (backend *managementBackend) CancelPendingConfig(ctx context.Context, expected managementapi.Revision) (managementapi.ConfigDocument, error) {
+	if ctx == nil {
+		return managementapi.ConfigDocument{}, managementInvalid(errors.New("management pending configuration context is required"))
+	}
+	lifecycle := backend.lifecycle
+	if lifecycle == nil {
+		lifecycle = context.Background()
+	}
+	if !backend.ready.Load() || lifecycle.Err() != nil {
+		return managementapi.ConfigDocument{}, &managementapi.BackendError{
+			Kind:   managementapi.ErrorUnavailable,
+			Code:   "runtime_unavailable",
+			Detail: "runtime is starting or stopping",
+		}
+	}
+	current := backend.controller.Current()
+	rawExpected := backend.revisions.resolve(expected, current.Revision)
+	updateContext, cancelUpdate := context.WithCancel(lifecycle)
+	stopRequestCancellation := context.AfterFunc(ctx, cancelUpdate)
+	defer func() {
+		stopRequestCancellation()
+		cancelUpdate()
+	}()
+	if ctx.Err() != nil {
+		cancelUpdate()
+	}
+	updated, err := backend.controller.CancelRestartContext(updateContext, rawExpected)
+	if err != nil {
+		return managementapi.ConfigDocument{}, backend.managementUpdateError(err)
+	}
+	return managementapi.ConfigDocument{
+		Config:   updated.Config.Redacted(),
+		Revision: backend.revisions.issue(updated.Revision),
+	}, nil
+}
+
 func validateManagementSize(candidate config.Config) error {
 	contents, err := config.Encode(candidate)
 	if err != nil {
@@ -302,6 +418,33 @@ func (backend *managementBackend) managementUpdateError(err error) error {
 			Code:   "restart_required",
 			Detail: "configuration changes require a process restart",
 			Fields: append([]string(nil), restart.Fields...),
+			Err:    err,
+		}
+	}
+	var pending *RestartPendingError
+	if errors.As(err, &pending) {
+		return &managementapi.BackendError{
+			Kind:   managementapi.ErrorConflict,
+			Code:   "restart_pending",
+			Detail: "restart the process or discard the pending configuration before making persisted changes",
+			Err:    err,
+		}
+	}
+	var notRequired *RestartNotRequiredError
+	if errors.As(err, &notRequired) {
+		return &managementapi.BackendError{
+			Kind:   managementapi.ErrorConflict,
+			Code:   "restart_not_required",
+			Detail: "configuration can be applied safely without restart",
+			Err:    err,
+		}
+	}
+	var notFound *PendingConfigNotFoundError
+	if errors.As(err, &notFound) {
+		return &managementapi.BackendError{
+			Kind:   managementapi.ErrorNotFound,
+			Code:   "pending_config_not_found",
+			Detail: "pending configuration was not found",
 			Err:    err,
 		}
 	}

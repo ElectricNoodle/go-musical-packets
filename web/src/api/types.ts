@@ -5,6 +5,7 @@ export type PacketProtocol = 'tcp' | 'udp' | 'icmp' | 'icmp6' | 'other'
 export interface Status {
   state: string
   revision: string
+  pending_revision?: string
   writable: boolean
   warning?: string
 }
@@ -110,6 +111,7 @@ export interface Validation {
 export interface RuntimeSnapshot {
   status: Status
   config: ConfigDocument
+  pending?: ConfigDocument
   interfaces: InterfacesDocument
   midi: MIDIDevicesDocument
 }

@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
-import { stubClient } from './test/fixtures'
+import { snapshot, stubClient } from './test/fixtures'
 
 afterEach(() => window.history.replaceState(null, '', '/'))
 
@@ -36,7 +36,7 @@ describe('setup assistant', () => {
     )
   })
 
-  it('identifies restart-required changes without offering a false apply path', async () => {
+  it('saves restart-required changes without applying them to the active runtime', async () => {
     const client = stubClient({
       validateConfig: vi.fn().mockResolvedValue({
         revision: 'public-revision',
@@ -54,7 +54,38 @@ describe('setup assistant', () => {
 
     expect(await screen.findByText('Restart required')).toBeInTheDocument()
     expect(screen.getByText('capture.interface')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /apply live-safe changes/i })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: /save for restart/i }))
+
+    await waitFor(() => expect(client.stageConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ capture: expect.objectContaining({ interface: 'lo0' }) }),
+      '"public-revision"',
+    ))
+    expect(client.updateConfig).not.toHaveBeenCalled()
+  })
+
+  it('loads and can discard a configuration already saved for restart', async () => {
+    const pending = {
+      config: { ...structuredClone(snapshot.config.config), capture: { ...snapshot.config.config.capture, interface: 'lo0' } },
+      revision: '"pending-revision"',
+    }
+    const client = stubClient({
+      getStatus: vi.fn().mockResolvedValue({
+        ...snapshot.status,
+        state: 'restart_pending',
+        pending_revision: 'pending-revision',
+        warning: 'configuration is saved and will take effect after restart',
+      }),
+      getPendingConfig: vi.fn().mockResolvedValue(pending),
+    })
+    const user = userEvent.setup()
+    render(<App client={client} />)
+
+    await user.click(await screen.findByRole('button', { name: /review/i }))
+    expect(await screen.findByText('Saved for restart')).toBeInTheDocument()
+    expect(screen.getByText('lo0')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /discard pending/i }))
+    await waitFor(() => expect(client.cancelPendingConfig).toHaveBeenCalledWith('"pending-revision"'))
   })
 
   it('routes MIDI panic through the management client', async () => {

@@ -21,23 +21,26 @@ const (
 )
 
 type stubBackend struct {
-	statusFunc       func(context.Context) (Status, error)
-	configFunc       func(context.Context) (ConfigDocument, error)
-	validateFunc     func(context.Context, config.Config) (Validation, error)
-	updateFunc       func(context.Context, Revision, config.Config) (ConfigDocument, error)
-	interfacesFunc   func(context.Context) (InterfacesDocument, error)
-	midiDevicesFunc  func(context.Context) (MIDIDevicesDocument, error)
-	auditionMIDIFunc func(context.Context, MIDIAuditionRequest) error
-	panicMIDIFunc    func(context.Context) error
-	rulesFunc        func(context.Context) (RulesDocument, error)
-	createRuleFunc   func(context.Context, Revision, config.RuleConfig) (RulesDocument, error)
-	replaceRulesFunc func(context.Context, Revision, config.RulesConfig) (RulesDocument, error)
-	replaceRuleFunc  func(context.Context, Revision, string, config.RuleConfig) (RulesDocument, error)
-	deleteRuleFunc   func(context.Context, Revision, string) (RulesDocument, error)
-	reorderRulesFunc func(context.Context, Revision, []string) (RulesDocument, error)
-	flowsFunc        func(context.Context, FlowPageRequest) (FlowPage, error)
-	mutedFunc        func(context.Context, []string) (FlowOverlay, error)
-	soloedFunc       func(context.Context, []string) (FlowOverlay, error)
+	statusFunc        func(context.Context) (Status, error)
+	configFunc        func(context.Context) (ConfigDocument, error)
+	pendingConfigFunc func(context.Context) (ConfigDocument, error)
+	validateFunc      func(context.Context, config.Config) (Validation, error)
+	updateFunc        func(context.Context, Revision, config.Config) (ConfigDocument, error)
+	stageConfigFunc   func(context.Context, Revision, config.Config) (ConfigDocument, error)
+	cancelPendingFunc func(context.Context, Revision) (ConfigDocument, error)
+	interfacesFunc    func(context.Context) (InterfacesDocument, error)
+	midiDevicesFunc   func(context.Context) (MIDIDevicesDocument, error)
+	auditionMIDIFunc  func(context.Context, MIDIAuditionRequest) error
+	panicMIDIFunc     func(context.Context) error
+	rulesFunc         func(context.Context) (RulesDocument, error)
+	createRuleFunc    func(context.Context, Revision, config.RuleConfig) (RulesDocument, error)
+	replaceRulesFunc  func(context.Context, Revision, config.RulesConfig) (RulesDocument, error)
+	replaceRuleFunc   func(context.Context, Revision, string, config.RuleConfig) (RulesDocument, error)
+	deleteRuleFunc    func(context.Context, Revision, string) (RulesDocument, error)
+	reorderRulesFunc  func(context.Context, Revision, []string) (RulesDocument, error)
+	flowsFunc         func(context.Context, FlowPageRequest) (FlowPage, error)
+	mutedFunc         func(context.Context, []string) (FlowOverlay, error)
+	soloedFunc        func(context.Context, []string) (FlowOverlay, error)
 }
 
 func (backend *stubBackend) Status(ctx context.Context) (Status, error) {
@@ -54,6 +57,13 @@ func (backend *stubBackend) Config(ctx context.Context) (ConfigDocument, error) 
 	return ConfigDocument{Config: config.Default(), Revision: testRevisionA}, nil
 }
 
+func (backend *stubBackend) PendingConfig(ctx context.Context) (ConfigDocument, error) {
+	if backend.pendingConfigFunc != nil {
+		return backend.pendingConfigFunc(ctx)
+	}
+	return ConfigDocument{Config: config.Default(), Revision: testRevisionB}, nil
+}
+
 func (backend *stubBackend) ValidateConfig(ctx context.Context, configuration config.Config) (Validation, error) {
 	if backend.validateFunc != nil {
 		return backend.validateFunc(ctx, configuration)
@@ -66,6 +76,20 @@ func (backend *stubBackend) UpdateConfig(ctx context.Context, expected Revision,
 		return backend.updateFunc(ctx, expected, configuration)
 	}
 	return ConfigDocument{Config: configuration, Revision: testRevisionB}, nil
+}
+
+func (backend *stubBackend) StageConfig(ctx context.Context, expected Revision, configuration config.Config) (ConfigDocument, error) {
+	if backend.stageConfigFunc != nil {
+		return backend.stageConfigFunc(ctx, expected, configuration)
+	}
+	return ConfigDocument{Config: configuration, Revision: testRevisionB}, nil
+}
+
+func (backend *stubBackend) CancelPendingConfig(ctx context.Context, expected Revision) (ConfigDocument, error) {
+	if backend.cancelPendingFunc != nil {
+		return backend.cancelPendingFunc(ctx, expected)
+	}
+	return ConfigDocument{Config: config.Default(), Revision: testRevisionA}, nil
 }
 
 func (backend *stubBackend) Interfaces(ctx context.Context) (InterfacesDocument, error) {
@@ -454,6 +478,61 @@ func TestUpdateConfigUsesStrongPrecondition(t *testing.T) {
 	}
 }
 
+func TestPendingConfigTransportUsesStrongRevisions(t *testing.T) {
+	configuration := config.Default()
+	configuration.Capture.Interface = "next0"
+	stageCalls := 0
+	cancelCalls := 0
+	handler := mustHandler(t, &stubBackend{
+		pendingConfigFunc: func(context.Context) (ConfigDocument, error) {
+			return ConfigDocument{Config: configuration, Revision: testRevisionB}, nil
+		},
+		stageConfigFunc: func(_ context.Context, expected Revision, candidate config.Config) (ConfigDocument, error) {
+			stageCalls++
+			if expected != testRevisionA || candidate.Capture.Interface != "next0" {
+				t.Fatalf("StageConfig(%q, interface %q)", expected, candidate.Capture.Interface)
+			}
+			return ConfigDocument{Config: candidate, Revision: testRevisionB}, nil
+		},
+		cancelPendingFunc: func(_ context.Context, expected Revision) (ConfigDocument, error) {
+			cancelCalls++
+			if expected != testRevisionB {
+				t.Fatalf("CancelPendingConfig revision = %q, want %q", expected, testRevisionB)
+			}
+			return ConfigDocument{Config: config.Default(), Revision: testRevisionA}, nil
+		},
+	})
+
+	getResponse := serve(handler, localRequestFor(http.MethodGet, "/api/v1/config/pending", ""))
+	assertStatus(t, getResponse, http.StatusOK)
+	if got := getResponse.Header().Get("ETag"); got != `"`+testRevisionB+`"` {
+		t.Fatalf("GET pending ETag = %q", got)
+	}
+
+	putRequest := localRequestFor(http.MethodPut, "/api/v1/config/pending", "capture:\n  interface: next0\n")
+	putRequest.Header.Set("Content-Type", "application/yaml")
+	putRequest.Header.Set("If-Match", `"`+testRevisionA+`"`)
+	putResponse := serve(handler, putRequest)
+	assertStatus(t, putResponse, http.StatusOK)
+	if got := putResponse.Header().Get("ETag"); got != `"`+testRevisionB+`"` {
+		t.Fatalf("PUT pending ETag = %q", got)
+	}
+	if stageCalls != 1 {
+		t.Fatalf("StageConfig calls = %d, want 1", stageCalls)
+	}
+
+	deleteRequest := localRequestFor(http.MethodDelete, "/api/v1/config/pending", "")
+	deleteRequest.Header.Set("If-Match", `"`+testRevisionB+`"`)
+	deleteResponse := serve(handler, deleteRequest)
+	assertStatus(t, deleteResponse, http.StatusOK)
+	if got := deleteResponse.Header().Get("ETag"); got != `"`+testRevisionA+`"` {
+		t.Fatalf("DELETE pending ETag = %q", got)
+	}
+	if cancelCalls != 1 {
+		t.Fatalf("CancelPendingConfig calls = %d, want 1", cancelCalls)
+	}
+}
+
 func TestPartialPutResetsOmittedFieldsToDefaults(t *testing.T) {
 	var got config.Config
 	handler := mustHandler(t, &stubBackend{updateFunc: func(_ context.Context, _ Revision, configuration config.Config) (ConfigDocument, error) {
@@ -558,11 +637,18 @@ func TestBackendErrorMapping(t *testing.T) {
 func TestBackendErrorsFromConfigOperations(t *testing.T) {
 	backendErr := &BackendError{Kind: ErrorUnavailable, Detail: "temporarily unavailable"}
 	backend := &stubBackend{
-		configFunc: func(context.Context) (ConfigDocument, error) { return ConfigDocument{}, backendErr },
+		configFunc:        func(context.Context) (ConfigDocument, error) { return ConfigDocument{}, backendErr },
+		pendingConfigFunc: func(context.Context) (ConfigDocument, error) { return ConfigDocument{}, backendErr },
 		validateFunc: func(context.Context, config.Config) (Validation, error) {
 			return Validation{}, backendErr
 		},
 		updateFunc: func(context.Context, Revision, config.Config) (ConfigDocument, error) {
+			return ConfigDocument{}, backendErr
+		},
+		stageConfigFunc: func(context.Context, Revision, config.Config) (ConfigDocument, error) {
+			return ConfigDocument{}, backendErr
+		},
+		cancelPendingFunc: func(context.Context, Revision) (ConfigDocument, error) {
 			return ConfigDocument{}, backendErr
 		},
 	}
@@ -579,6 +665,18 @@ func TestBackendErrorsFromConfigOperations(t *testing.T) {
 	updateRequest.Header.Set("Content-Type", "application/yaml")
 	updateRequest.Header.Set("If-Match", `"`+testRevisionA+`"`)
 	assertProblem(t, serve(handler, updateRequest), http.StatusServiceUnavailable, "unavailable")
+
+	pendingGet := serve(handler, localRequestFor(http.MethodGet, "/api/v1/config/pending", ""))
+	assertProblem(t, pendingGet, http.StatusServiceUnavailable, "unavailable")
+
+	pendingPut := localRequestFor(http.MethodPut, "/api/v1/config/pending", "{}\n")
+	pendingPut.Header.Set("Content-Type", "application/yaml")
+	pendingPut.Header.Set("If-Match", `"`+testRevisionA+`"`)
+	assertProblem(t, serve(handler, pendingPut), http.StatusServiceUnavailable, "unavailable")
+
+	pendingDelete := localRequestFor(http.MethodDelete, "/api/v1/config/pending", "")
+	pendingDelete.Header.Set("If-Match", `"`+testRevisionA+`"`)
+	assertProblem(t, serve(handler, pendingDelete), http.StatusServiceUnavailable, "unavailable")
 }
 
 func TestLocalRequestSecurity(t *testing.T) {
@@ -711,6 +809,7 @@ func TestManualRouting(t *testing.T) {
 		{name: "status method", method: http.MethodPost, path: "/api/v1/status", status: 405, code: "method_not_allowed", allow: "GET, HEAD"},
 		{name: "config method", method: http.MethodDelete, path: "/api/v1/config", status: 405, code: "method_not_allowed", allow: "GET, HEAD, PUT"},
 		{name: "validate method", method: http.MethodGet, path: "/api/v1/config/validate", status: 405, code: "method_not_allowed", allow: "POST"},
+		{name: "pending method", method: http.MethodPost, path: "/api/v1/config/pending", status: 405, code: "method_not_allowed", allow: "GET, HEAD, PUT, DELETE"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -745,6 +844,7 @@ func TestRouteMethodMatrix(t *testing.T) {
 		{name: "status", path: "/api/v1/status", allow: "GET, HEAD", allowed: map[string]bool{http.MethodGet: true, http.MethodHead: true}},
 		{name: "config", path: "/api/v1/config", allow: "GET, HEAD, PUT", allowed: map[string]bool{http.MethodGet: true, http.MethodHead: true, http.MethodPut: true}},
 		{name: "validate", path: "/api/v1/config/validate", allow: "POST", allowed: map[string]bool{http.MethodPost: true}},
+		{name: "pending", path: "/api/v1/config/pending", allow: "GET, HEAD, PUT, DELETE", allowed: map[string]bool{http.MethodGet: true, http.MethodHead: true, http.MethodPut: true, http.MethodDelete: true}},
 		{name: "missing", path: "/api/v1/missing", missing: true},
 	}
 
@@ -755,7 +855,7 @@ func TestRouteMethodMatrix(t *testing.T) {
 				if method == http.MethodPost || method == http.MethodPut {
 					request.Header.Set("Content-Type", "application/yaml")
 				}
-				if method == http.MethodPut {
+				if method == http.MethodPut || method == http.MethodDelete {
 					request.Header.Set("If-Match", `"`+testRevisionA+`"`)
 				}
 				response := serve(handler, request)

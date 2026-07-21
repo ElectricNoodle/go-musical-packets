@@ -34,6 +34,29 @@ describe('management client', () => {
     }))
   })
 
+  it('loads, stages, and discards the next-start configuration by strong revision', async () => {
+    const response = (revision: string) => new Response('instance:\n  id: node\n', {
+      status: 200, headers: { ETag: revision, 'Content-Type': 'application/yaml' },
+    })
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(response('"pending-a"'))
+      .mockResolvedValueOnce(response('"pending-b"'))
+      .mockResolvedValueOnce(response('"active-a"'))
+    const client = createManagementClient(fetcher)
+
+    await client.getPendingConfig()
+    await client.stageConfig(configuration, '"active-a"')
+    await client.cancelPendingConfig('"pending-b"')
+
+    expect(fetcher).toHaveBeenNthCalledWith(1, '/api/v1/config/pending', expect.objectContaining({ cache: 'no-store' }))
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/v1/config/pending', expect.objectContaining({
+      method: 'PUT', headers: expect.objectContaining({ 'If-Match': '"active-a"' }), body: expect.stringContaining('interface: auto'),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/v1/config/pending', expect.objectContaining({
+      method: 'DELETE', headers: { 'If-Match': '"pending-b"' },
+    }))
+  })
+
   it('exposes bounded problem details from failed requests', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       status: 409,

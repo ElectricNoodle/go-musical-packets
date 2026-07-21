@@ -82,10 +82,13 @@ export function stubClient(overrides: Partial<ManagementClient> = {}): Managemen
   return {
     getStatus: vi.fn().mockResolvedValue(snapshot.status),
     getConfig: vi.fn().mockResolvedValue(snapshot.config),
+    getPendingConfig: vi.fn().mockRejectedValue(new Error('pending configuration was not found')),
     getInterfaces: vi.fn().mockResolvedValue(snapshot.interfaces),
     getMIDI: vi.fn().mockResolvedValue(snapshot.midi),
     validateConfig: vi.fn().mockResolvedValue({ revision: 'public-revision', hot_fields: [], restart_required_fields: [] }),
     updateConfig: vi.fn().mockResolvedValue(snapshot.config),
+    stageConfig: vi.fn().mockImplementation(async (config) => ({ config, revision: '"pending-revision"' })),
+    cancelPendingConfig: vi.fn().mockResolvedValue(snapshot.config),
     auditionMIDI: vi.fn().mockResolvedValue(undefined),
     panicMIDI: vi.fn().mockResolvedValue(undefined),
     getFlows: vi.fn().mockResolvedValue(flowPage),

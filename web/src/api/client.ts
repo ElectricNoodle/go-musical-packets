@@ -30,10 +30,13 @@ export class ApiError extends Error {
 export interface ManagementClient {
   getStatus(signal?: AbortSignal): Promise<Status>
   getConfig(signal?: AbortSignal): Promise<ConfigDocument>
+  getPendingConfig(signal?: AbortSignal): Promise<ConfigDocument>
   getInterfaces(signal?: AbortSignal): Promise<InterfacesDocument>
   getMIDI(signal?: AbortSignal): Promise<MIDIDevicesDocument>
   validateConfig(config: Configuration, signal?: AbortSignal): Promise<Validation>
   updateConfig(config: Configuration, revision: string, signal?: AbortSignal): Promise<ConfigDocument>
+  stageConfig(config: Configuration, revision: string, signal?: AbortSignal): Promise<ConfigDocument>
+  cancelPendingConfig(revision: string, signal?: AbortSignal): Promise<ConfigDocument>
   auditionMIDI(channel: number, signal?: AbortSignal): Promise<void>
   panicMIDI(signal?: AbortSignal): Promise<void>
   getFlows(limit?: number, signal?: AbortSignal): Promise<FlowPage>
@@ -107,6 +110,7 @@ export function createManagementClient(fetcher: typeof fetch = fetch): Managemen
   return {
     getStatus: (signal) => json<Status>('/api/v1/status', { signal }),
     getConfig: async (signal) => configDocument(await request('/api/v1/config', { signal })),
+    getPendingConfig: async (signal) => configDocument(await request('/api/v1/config/pending', { signal })),
     getInterfaces: (signal) => json<InterfacesDocument>('/api/v1/interfaces', { signal }),
     getMIDI: (signal) => json<MIDIDevicesDocument>('/api/v1/midi/devices', { signal }),
     validateConfig: async (config, signal) => {
@@ -128,6 +132,23 @@ export function createManagementClient(fetcher: typeof fetch = fetch): Managemen
           method: 'PUT',
           headers: { ...yamlHeaders, 'If-Match': revision },
           body: stringify(config),
+          signal,
+        }),
+      ),
+    stageConfig: async (config, revision, signal) =>
+      configDocument(
+        await request('/api/v1/config/pending', {
+          method: 'PUT',
+          headers: { ...yamlHeaders, 'If-Match': revision },
+          body: stringify(config),
+          signal,
+        }),
+      ),
+    cancelPendingConfig: async (revision, signal) =>
+      configDocument(
+        await request('/api/v1/config/pending', {
+          method: 'DELETE',
+          headers: { 'If-Match': revision },
           signal,
         }),
       ),

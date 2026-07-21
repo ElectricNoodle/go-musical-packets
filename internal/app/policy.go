@@ -33,6 +33,7 @@ type ControllerState string
 
 const (
 	ControllerStateReady               ControllerState = "ready"
+	ControllerStateRestartPending      ControllerState = "restart_pending"
 	ControllerStateOutOfSync           ControllerState = "out_of_sync"
 	ControllerStateDurabilityUncertain ControllerState = "durability_uncertain"
 	ControllerStateDegraded            ControllerState = "degraded"
@@ -59,6 +60,23 @@ type Validation struct {
 type RestartRequiredError struct {
 	Fields []string
 }
+
+// RestartPendingError rejects active-policy writes while a different durable
+// generation is waiting for the next process start.
+type RestartPendingError struct{}
+
+func (*RestartPendingError) Error() string { return "configuration restart is pending" }
+
+// RestartNotRequiredError rejects staging when the candidate can be applied
+// safely to the active process instead.
+type RestartNotRequiredError struct{}
+
+func (*RestartNotRequiredError) Error() string { return "configuration does not require restart" }
+
+// PendingConfigNotFoundError reports that no next-start generation exists.
+type PendingConfigNotFoundError struct{}
+
+func (*PendingConfigNotFoundError) Error() string { return "pending configuration was not found" }
 
 func (err *RestartRequiredError) Error() string {
 	return "configuration changes require restart: " + strings.Join(err.Fields, ", ")
@@ -93,12 +111,14 @@ func (err *DegradedError) Error() string {
 }
 
 type policySnapshot struct {
-	revision      config.Revision
-	configuration config.Config
-	selector      *flow.Selector
-	overlay       flow.Overlay
-	state         ControllerState
-	warning       string
+	revision             config.Revision
+	configuration        config.Config
+	pendingRevision      config.Revision
+	pendingConfiguration config.Config
+	selector             *flow.Selector
+	overlay              flow.Overlay
+	state                ControllerState
+	warning              string
 }
 
 // policyStore is both the publication boundary and the pipeline selector. Its
@@ -201,6 +221,19 @@ func (controller *Controller) Current() Document {
 	}
 }
 
+// Pending returns the validated durable generation waiting for the next
+// process start. The returned value is detached from controller storage.
+func (controller *Controller) Pending() (config.Snapshot, bool) {
+	snapshot := controller.store.current.Load()
+	if snapshot == nil || snapshot.state != ControllerStateRestartPending || snapshot.pendingRevision == "" {
+		return config.Snapshot{}, false
+	}
+	return config.Snapshot{
+		Config:   snapshot.pendingConfiguration.Clone(),
+		Revision: snapshot.pendingRevision,
+	}, true
+}
+
 // Overlay returns detached mute and solo maps for the active generation.
 func (controller *Controller) Overlay() flow.Overlay {
 	return cloneOverlay(controller.store.current.Load().overlay)
@@ -266,6 +299,113 @@ func (controller *Controller) UpdateContext(ctx context.Context, expected config
 	})
 }
 
+// StageRestartContext validates and durably stores a complete next-start
+// generation without publishing it to active runtime components.
+func (controller *Controller) StageRestartContext(ctx context.Context, expected config.Revision, candidate config.Config) (config.Snapshot, error) {
+	if ctx == nil {
+		return config.Snapshot{}, errors.New("pending configuration context is required")
+	}
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return config.Snapshot{}, err
+	}
+	current := controller.store.current.Load()
+	if current.state == ControllerStateDegraded {
+		return config.Snapshot{}, &DegradedError{Reason: current.warning}
+	}
+	if current.state != ControllerStateReady && current.state != ControllerStateRestartPending {
+		return config.Snapshot{}, &policyStateError{state: current.state}
+	}
+	durableRevision := current.revision
+	if current.state == ControllerStateRestartPending {
+		durableRevision = current.pendingRevision
+	}
+	if expected != durableRevision {
+		return config.Snapshot{}, &config.ConflictError{Expected: expected, Actual: durableRevision}
+	}
+	candidate = candidate.Clone()
+	classification, err := controller.validate(current.configuration, candidate)
+	if err != nil {
+		return config.Snapshot{}, err
+	}
+	if len(classification.RestartRequiredFields) == 0 {
+		return config.Snapshot{}, &RestartNotRequiredError{}
+	}
+	if controller.repository == nil {
+		return config.Snapshot{}, &ReadOnlyError{}
+	}
+	if err := ctx.Err(); err != nil {
+		return config.Snapshot{}, err
+	}
+	change, err := controller.replace(ctx, durableRevision, candidate)
+	if err != nil {
+		var conflict *config.ConflictError
+		if errors.As(err, &conflict) && conflict.Actual != durableRevision {
+			controller.store.publish(snapshotWithStatus(
+				current,
+				ControllerStateOutOfSync,
+				fmt.Sprintf("configuration file revision is %s while expected pending revision is %s", conflict.Actual, durableRevision),
+			))
+		} else if !errors.As(err, &conflict) {
+			controller.markPersistenceUncertainty(current, err)
+		}
+		return config.Snapshot{}, fmt.Errorf("persist pending configuration: %w", err)
+	}
+	next := snapshotWithStatus(current, ControllerStateRestartPending, "configuration saved for next restart")
+	next.pendingRevision = change.After.Revision
+	next.pendingConfiguration = change.After.Config.Clone()
+	if change.DurabilityWarning != nil {
+		next.warning = "configuration saved for next restart; durability is uncertain: " + change.DurabilityWarning.Error()
+	}
+	controller.store.publish(next)
+	return config.Snapshot{Config: change.After.Config.Clone(), Revision: change.After.Revision}, nil
+}
+
+// CancelRestartContext restores the active generation as the durable startup
+// configuration and clears the pending marker.
+func (controller *Controller) CancelRestartContext(ctx context.Context, expected config.Revision) (Document, error) {
+	if ctx == nil {
+		return controller.Current(), errors.New("pending configuration context is required")
+	}
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return controller.Current(), err
+	}
+	current := controller.store.current.Load()
+	if current.state != ControllerStateRestartPending || current.pendingRevision == "" {
+		return controller.Current(), &PendingConfigNotFoundError{}
+	}
+	if expected != current.pendingRevision {
+		return controller.Current(), &config.ConflictError{Expected: expected, Actual: current.pendingRevision}
+	}
+	change, err := controller.replace(ctx, current.pendingRevision, current.configuration.Clone())
+	if err != nil {
+		var conflict *config.ConflictError
+		if errors.As(err, &conflict) && conflict.Actual != current.pendingRevision {
+			controller.store.publish(snapshotWithStatus(
+				current,
+				ControllerStateOutOfSync,
+				fmt.Sprintf("configuration file revision is %s while pending revision is %s", conflict.Actual, current.pendingRevision),
+			))
+		} else if !errors.As(err, &conflict) {
+			controller.markPersistenceUncertainty(current, err)
+		}
+		return controller.Current(), fmt.Errorf("discard pending configuration: %w", err)
+	}
+	next := snapshotWithStatus(current, ControllerStateReady, "")
+	next.revision = change.After.Revision
+	next.pendingRevision = ""
+	next.pendingConfiguration = config.Config{}
+	if change.DurabilityWarning != nil {
+		next.state = ControllerStateDurabilityUncertain
+		next.warning = change.DurabilityWarning.Error()
+	}
+	controller.store.publish(next)
+	return controller.Current(), nil
+}
+
 type configCandidateBuilder func(config.Config) (config.Config, error)
 
 func (controller *Controller) transactContext(ctx context.Context, expected config.Revision, build configCandidateBuilder) (Document, error) {
@@ -281,6 +421,9 @@ func (controller *Controller) transactContext(ctx context.Context, expected conf
 	current := controller.store.current.Load()
 	if current.state == ControllerStateDegraded {
 		return controller.Current(), &DegradedError{Reason: current.warning}
+	}
+	if current.state == ControllerStateRestartPending {
+		return controller.Current(), &RestartPendingError{}
 	}
 	if current.state != ControllerStateOutOfSync && expected != current.revision {
 		return controller.Current(), &config.ConflictError{Expected: expected, Actual: current.revision}
@@ -391,14 +534,18 @@ func (controller *Controller) replace(ctx context.Context, expected config.Revis
 
 func (controller *Controller) markPersistenceUncertainty(current *policySnapshot, persistErr error) {
 	durable, err := controller.repository.Read()
-	if err == nil && durable.Revision == current.revision {
+	expectedDurable := current.revision
+	if current.state == ControllerStateRestartPending && current.pendingRevision != "" {
+		expectedDurable = current.pendingRevision
+	}
+	if err == nil && durable.Revision == expectedDurable {
 		return
 	}
 	warning := fmt.Sprintf("configuration persistence failed and durable state could not be verified: %v", persistErr)
 	if err != nil {
 		warning += fmt.Sprintf("; read failed: %v", err)
 	} else {
-		warning += fmt.Sprintf("; file revision is %s while active revision is %s", durable.Revision, current.revision)
+		warning += fmt.Sprintf("; file revision is %s while expected durable revision is %s", durable.Revision, expectedDurable)
 	}
 	controller.store.publish(snapshotWithStatus(current, ControllerStateOutOfSync, warning))
 }
@@ -435,12 +582,14 @@ func (controller *Controller) rollback(change config.Change) (config.Change, err
 
 func snapshotWithStatus(current *policySnapshot, state ControllerState, warning string) *policySnapshot {
 	return &policySnapshot{
-		revision:      current.revision,
-		configuration: current.configuration.Clone(),
-		selector:      current.selector,
-		overlay:       cloneOverlay(current.overlay),
-		state:         state,
-		warning:       warning,
+		revision:             current.revision,
+		configuration:        current.configuration.Clone(),
+		pendingRevision:      current.pendingRevision,
+		pendingConfiguration: current.pendingConfiguration.Clone(),
+		selector:             current.selector,
+		overlay:              cloneOverlay(current.overlay),
+		state:                state,
+		warning:              warning,
 	}
 }
 
@@ -505,7 +654,7 @@ func (controller *Controller) replaceOverlay(ctx context.Context, muted, soloed 
 	if err := ctx.Err(); err != nil {
 		return cloneOverlay(current.overlay), err
 	}
-	if current.state != ControllerStateReady {
+	if current.state != ControllerStateReady && current.state != ControllerStateRestartPending {
 		return cloneOverlay(current.overlay), &policyStateError{state: current.state}
 	}
 	limit := current.configuration.Performance.FlowRegistryCapacity
@@ -519,14 +668,7 @@ func (controller *Controller) replaceOverlay(ctx context.Context, muted, soloed 
 	if err := validateOverlaySet(values, limit); err != nil {
 		return cloneOverlay(current.overlay), err
 	}
-	next := &policySnapshot{
-		revision:      current.revision,
-		configuration: current.configuration.Clone(),
-		selector:      current.selector,
-		overlay:       cloneOverlay(current.overlay),
-		state:         current.state,
-		warning:       current.warning,
-	}
+	next := snapshotWithStatus(current, current.state, current.warning)
 	if replaceMute {
 		next.overlay.Muted = cloneSet(muted)
 	} else {

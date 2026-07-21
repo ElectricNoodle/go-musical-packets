@@ -6,3 +6,4 @@
 !/internal/webui/dist/.placeholder
 .DS_Store
 *.local.yaml
+.*.local.yaml.lock

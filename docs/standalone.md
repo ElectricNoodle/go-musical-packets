@@ -40,6 +40,9 @@ GET /api/v1/status
 GET /api/v1/config
 POST /api/v1/config/validate
 PUT /api/v1/config
+GET /api/v1/config/pending
+PUT /api/v1/config/pending
+DELETE /api/v1/config/pending
 GET /api/v1/interfaces
 GET /api/v1/midi/devices
 POST /api/v1/midi/audition

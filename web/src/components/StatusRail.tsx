@@ -20,7 +20,7 @@ export function StatusRail({ snapshot, onPanic, busy }: StatusRailProps) {
         <strong className={`signal signal--${snapshot.status.state === 'ready' ? 'good' : 'warn'}`}>
           {snapshot.status.state}
         </strong>
-        <small>{snapshot.status.writable ? 'Transactional writes enabled' : 'Read-only configuration'}</small>
+        <small>{snapshot.status.state === 'restart_pending' ? 'Restart configuration saved' : snapshot.status.writable ? 'Transactional writes enabled' : 'Read-only configuration'}</small>
       </div>
 
       <div className="status-block">

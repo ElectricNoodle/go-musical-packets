@@ -56,7 +56,16 @@ func TestManagementInstrumentationClassifiesConfigUpdates(t *testing.T) {
 	missingPrecondition.Header.Set("Content-Type", "application/yaml")
 	assertStatus(t, serve(handler, missingPrecondition), http.StatusPreconditionRequired)
 
-	if got, want := observer.updateSnapshot(), []string{"success", "precondition"}; !reflect.DeepEqual(got, want) {
+	pending := localRequestFor(http.MethodPut, "/api/v1/config/pending", string(contents))
+	pending.Header.Set("Content-Type", "application/yaml")
+	pending.Header.Set("If-Match", `"`+testRevisionA+`"`)
+	assertStatus(t, serve(handler, pending), http.StatusOK)
+
+	discard := localRequestFor(http.MethodDelete, "/api/v1/config/pending", "")
+	discard.Header.Set("If-Match", `"`+testRevisionB+`"`)
+	assertStatus(t, serve(handler, discard), http.StatusOK)
+
+	if got, want := observer.updateSnapshot(), []string{"success", "precondition", "success", "success"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("config update results = %#v, want %#v", got, want)
 	}
 }

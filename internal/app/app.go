@@ -166,7 +166,7 @@ func RunWithOptionsAndDependencies(
 			return errors.New("application is starting or stopping")
 		}
 		policy := controller.store.current.Load()
-		if policy.state != ControllerStateReady {
+		if policy.state != ControllerStateReady && policy.state != ControllerStateRestartPending {
 			return fmt.Errorf("runtime configuration state is %s", policy.state)
 		}
 		if configuration.MIDI.Enabled {

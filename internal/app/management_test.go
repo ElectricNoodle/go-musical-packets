@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -113,6 +114,75 @@ func TestManagementBackendValidationReturnsNonNilEmptyCollections(t *testing.T) 
 	if validation.RestartRequiredFields == nil || len(validation.RestartRequiredFields) != 0 {
 		t.Fatalf("restart fields = %#v, want non-nil empty collection", validation.RestartRequiredFields)
 	}
+}
+
+func TestManagementBackendStagesAndDiscardsPendingConfiguration(t *testing.T) {
+	configuration := managementTestConfig()
+	repository := newMemoryConfigRepository(configuration)
+	controller := mustController(t, configuration, repository, nil)
+	var ready atomic.Bool
+	ready.Store(true)
+	backend := newTestManagementBackend(controller, &ready, context.Background())
+	active, err := backend.Config(context.Background())
+	if err != nil {
+		t.Fatalf("Config() error = %v", err)
+	}
+	candidate := active.Config.Clone()
+	candidate.Capture.Interface = "next0"
+
+	pending, err := backend.StageConfig(context.Background(), active.Revision, candidate)
+	if err != nil {
+		t.Fatalf("StageConfig() error = %v", err)
+	}
+	if pending.Revision == active.Revision || pending.Config.Capture.Interface != "next0" {
+		t.Fatalf("StageConfig() = %#v", pending)
+	}
+	assertManagementConfigRedacted(t, pending.Config, configuration)
+	current, err := backend.Config(context.Background())
+	if err != nil {
+		t.Fatalf("Config(active) error = %v", err)
+	}
+	if current.Revision != active.Revision || current.Config.Capture.Interface != active.Config.Capture.Interface {
+		t.Fatalf("active config changed = %#v, want %#v", current, active)
+	}
+	status, err := backend.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if status.State != string(ControllerStateRestartPending) || status.PendingRevision != pending.Revision || status.Warning == "" {
+		t.Fatalf("Status() = %#v, want restart pending", status)
+	}
+	loaded, err := backend.PendingConfig(context.Background())
+	if err != nil {
+		t.Fatalf("PendingConfig() error = %v", err)
+	}
+	if !reflect.DeepEqual(loaded, pending) {
+		t.Fatalf("PendingConfig() = %#v, want %#v", loaded, pending)
+	}
+
+	updatedCandidate := loaded.Config.Clone()
+	updatedCandidate.Capture.BPF = "tcp"
+	updatedPending, err := backend.StageConfig(context.Background(), loaded.Revision, updatedCandidate)
+	if err != nil {
+		t.Fatalf("StageConfig(update) error = %v", err)
+	}
+	if updatedPending.Revision == pending.Revision || updatedPending.Config.Capture.BPF != "tcp" {
+		t.Fatalf("updated pending = %#v", updatedPending)
+	}
+	hotCandidate := active.Config.Clone()
+	hotCandidate.Mapping.DefaultChannel++
+	_, err = backend.UpdateConfig(context.Background(), active.Revision, hotCandidate)
+	assertManagementBackendError(t, err, managementapi.ErrorConflict, "restart_pending")
+
+	restored, err := backend.CancelPendingConfig(context.Background(), updatedPending.Revision)
+	if err != nil {
+		t.Fatalf("CancelPendingConfig() error = %v", err)
+	}
+	if restored.Revision != active.Revision || !reflect.DeepEqual(restored.Config, active.Config) {
+		t.Fatalf("CancelPendingConfig() = %#v, want %#v", restored, active)
+	}
+	_, err = backend.PendingConfig(context.Background())
+	assertManagementBackendError(t, err, managementapi.ErrorNotFound, "pending_config_not_found")
 }
 
 func TestManagementBackendMapsUpdateFailuresAndRejectsWritesWhenUnavailable(t *testing.T) {

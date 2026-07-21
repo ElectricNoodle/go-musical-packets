@@ -185,6 +185,9 @@ GET    /api/v1/status
 GET    /api/v1/config
 POST   /api/v1/config/validate
 PUT    /api/v1/config
+GET    /api/v1/config/pending
+PUT    /api/v1/config/pending
+DELETE /api/v1/config/pending
 GET    /api/v1/interfaces
 GET    /api/v1/midi/devices
 POST   /api/v1/midi/audition
@@ -324,14 +327,15 @@ Pure domain packages do not depend directly on Prometheus.
 
 ## Delivery stages
 
-Stages 1 through 10 are implemented. Stage 11 is underway: frontend
-foundations, the first setup-assistant slice, and the bounded flow table with
+Stages 1 through 11 are implemented. Frontend foundations, the setup assistant,
+and the bounded flow table with
 temporary mute/solo controls, observed rates, and authoritative rule/musical
 annotations are implemented. Exact-flow pinning and constrained generalized
 rule creation are also implemented. Backend-authored match explanations and the
-complete revision-guarded ordered rule workspace are implemented. Completing
-the setup assistant, including a pending-configuration transaction for
-restart-required changes, is the current stage-11 frontier.
+complete revision-guarded ordered rule workspace are implemented. Validated
+restart-required drafts can be durably saved, revised, or discarded without
+changing the active runtime generation. The piano roll and musical viewer are
+the current stage-12 frontier.
 
 1. Architecture record and exact behavioral specification.
 2. Go foundations, config, logging, lifecycle, build metadata, and CI.

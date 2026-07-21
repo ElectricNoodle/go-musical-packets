@@ -24,12 +24,13 @@ function errorMessage(error: unknown): string {
 }
 
 export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupAssistantProps) {
+  const baseline = snapshot.pending?.config ?? snapshot.config.config
   const [stepIndex, setStepIndex] = useState(0)
-  const [draft, setDraft] = useState(() => cloneConfiguration(snapshot.config.config))
+  const [draft, setDraft] = useState(() => cloneConfiguration(baseline))
   const [validation, setValidation] = useState<Validation | null>(null)
-  const [busy, setBusy] = useState<'validate' | 'apply' | 'audition' | null>(null)
+  const [busy, setBusy] = useState<'validate' | 'apply' | 'stage' | 'cancel' | 'audition' | null>(null)
   const step = steps[stepIndex] as Step
-  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(snapshot.config.config), [draft, snapshot.config.config])
+  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(baseline), [baseline, draft])
 
   const change = (mutate: (next: Configuration) => void) => {
     setDraft((current) => {
@@ -60,11 +61,39 @@ export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupA
   }
 
   const apply = async () => {
-    if (!validation || validation.restart_required_fields.length > 0) return
+    if (!validation || validation.restart_required_fields.length > 0 || snapshot.pending) return
     setBusy('apply')
     try {
       await client.updateConfig(draft, snapshot.config.revision)
       announce('Configuration applied atomically.', 'success')
+      await onApplied()
+    } catch (error) {
+      announce(errorMessage(error), 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const stage = async () => {
+    if (!validation || validation.restart_required_fields.length === 0) return
+    setBusy('stage')
+    try {
+      await client.stageConfig(draft, snapshot.pending?.revision ?? snapshot.config.revision)
+      announce('Configuration saved for the next process restart.', 'success')
+      await onApplied()
+    } catch (error) {
+      announce(errorMessage(error), 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const cancelPending = async () => {
+    if (!snapshot.pending) return
+    setBusy('cancel')
+    try {
+      await client.cancelPendingConfig(snapshot.pending.revision)
+      announce('Pending restart configuration discarded.', 'success')
       await onApplied()
     } catch (error) {
       announce(errorMessage(error), 'error')
@@ -93,9 +122,9 @@ export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupA
           <h1 id="setup-title">Shape traffic into an instrument.</h1>
           <p>Configure the signal path in four deliberate passes. Nothing is applied until validation succeeds.</p>
         </div>
-        <div className="revision" title={snapshot.status.revision}>
-          <span>revision</span>
-          <code>{snapshot.status.revision.slice(0, 8)}</code>
+        <div className="revision" title={snapshot.pending?.revision ?? snapshot.status.revision}>
+          <span>{snapshot.pending ? 'next start' : 'revision'}</span>
+          <code>{(snapshot.pending?.revision ?? snapshot.status.revision).slice(0, 8)}</code>
         </div>
       </header>
 
@@ -245,16 +274,21 @@ export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupA
                 <div><dt>Safety</dt><dd>{draft.performance.maximum_notes_per_second} notes/s · {draft.performance.maximum_polyphony} voices</dd></div>
               </dl>
               <div className="validation-card" aria-live="polite">
-                {!validation && <><span className="validation-icon">?</span><strong>Not validated</strong><p>Run validation to classify live-safe and restart-required changes.</p></>}
-                {validation && validation.restart_required_fields.length === 0 && <><span className="validation-icon validation-icon--good">✓</span><strong>Ready to apply</strong><p>{validation.hot_fields.length ? `${validation.hot_fields.length} live field change${validation.hot_fields.length === 1 ? '' : 's'} will be applied atomically.` : 'The active configuration already matches this draft.'}</p></>}
-                {validation && validation.restart_required_fields.length > 0 && <><span className="validation-icon validation-icon--warn">↻</span><strong>Restart required</strong><p>This runtime does not persist restart-only changes while it is active.</p><ul>{validation.restart_required_fields.map((field) => <li key={field}><code>{field}</code></li>)}</ul></>}
+                {!validation && snapshot.pending && !dirty && <><span className="validation-icon validation-icon--warn">↻</span><strong>Saved for restart</strong><p>The active runtime is unchanged. This complete configuration will load on the next process start.</p></>}
+                {!validation && (!snapshot.pending || dirty) && <><span className="validation-icon">?</span><strong>Not validated</strong><p>Run validation to classify live-safe and restart-required changes.</p></>}
+                {validation && validation.restart_required_fields.length === 0 && !snapshot.pending && <><span className="validation-icon validation-icon--good">✓</span><strong>Ready to apply</strong><p>{validation.hot_fields.length ? `${validation.hot_fields.length} live field change${validation.hot_fields.length === 1 ? '' : 's'} will be applied atomically.` : 'The active configuration already matches this draft.'}</p></>}
+                {validation && validation.restart_required_fields.length === 0 && snapshot.pending && <><span className="validation-icon validation-icon--warn">→</span><strong>Discard pending first</strong><p>This draft no longer requires restart. Discard the saved generation before applying live-safe changes.</p></>}
+                {validation && validation.restart_required_fields.length > 0 && <><span className="validation-icon validation-icon--warn">↻</span><strong>Restart required</strong><p>Save this complete configuration now and it will become active on the next process start.</p><ul>{validation.restart_required_fields.map((field) => <li key={field}><code>{field}</code></li>)}</ul></>}
               </div>
             </div>
             {!snapshot.status.writable && <p className="inline-notice">This process was started without a writable configuration repository. You can inspect and validate, but not apply changes.</p>}
             <div className="review-actions">
-              <button type="button" className="secondary-button" onClick={() => setDraft(cloneConfiguration(snapshot.config.config))} disabled={!dirty || busy !== null}>Reset draft</button>
+              <button type="button" className="secondary-button" onClick={() => { setDraft(cloneConfiguration(baseline)); setValidation(null) }} disabled={!dirty || busy !== null}>Reset draft</button>
+              {snapshot.pending && <button type="button" className="secondary-button" onClick={() => void cancelPending()} disabled={busy !== null}>{busy === 'cancel' ? 'Discarding…' : 'Discard pending'}</button>}
               <button type="button" className="secondary-button" onClick={() => void validate()} disabled={busy !== null}>{busy === 'validate' ? 'Validating…' : 'Validate'}</button>
-              <button type="button" className="primary-button" onClick={() => void apply()} disabled={!dirty || !snapshot.status.writable || busy !== null || !validation || validation.restart_required_fields.length > 0}>{busy === 'apply' ? 'Applying…' : 'Apply live-safe changes'}</button>
+              {validation && validation.restart_required_fields.length > 0
+                ? <button type="button" className="primary-button" onClick={() => void stage()} disabled={!dirty || !snapshot.status.writable || busy !== null}>{busy === 'stage' ? 'Saving…' : snapshot.pending ? 'Update next restart' : 'Save for restart'}</button>
+                : <button type="button" className="primary-button" onClick={() => void apply()} disabled={!dirty || Boolean(snapshot.pending) || !snapshot.status.writable || busy !== null || !validation}>{busy === 'apply' ? 'Applying…' : 'Apply live-safe changes'}</button>}
             </div>
           </div>
         )}
@@ -262,7 +296,7 @@ export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupA
 
       <footer className="assistant__footer">
         <button type="button" className="text-button" onClick={() => setStepIndex((current) => Math.max(0, current - 1))} disabled={stepIndex === 0}>← Back</button>
-        <span>{dirty ? 'Unsaved draft' : 'Configuration unchanged'}</span>
+        <span>{dirty ? 'Unsaved draft' : snapshot.pending ? 'Restart configuration saved' : 'Configuration unchanged'}</span>
         <button type="button" className="primary-button" onClick={() => setStepIndex((current) => Math.min(steps.length - 1, current + 1))} disabled={stepIndex === steps.length - 1}>Continue →</button>
       </footer>
     </section>

@@ -38,7 +38,8 @@ export default function App({ client: suppliedClient }: AppProps) {
         client.getInterfaces(signal),
         client.getMIDI(signal),
       ])
-      setSnapshot({ status, config, interfaces, midi })
+      const pending = status.state === 'restart_pending' ? await client.getPendingConfig(signal) : undefined
+      setSnapshot({ status, config, pending, interfaces, midi })
       setError(null)
     } catch (loadError) {
       if (signal?.aborted) return
@@ -126,7 +127,7 @@ export default function App({ client: suppliedClient }: AppProps) {
       <StatusRail snapshot={snapshot} onPanic={panic} busy={panicBusy} />
       <main className="workspace">
         {snapshot.status.warning && <div className="warning-banner" role="status">{snapshot.status.warning}</div>}
-        {view === 'setup' && <SetupAssistant key={snapshot.config.revision} client={client} snapshot={snapshot} onApplied={() => load()} announce={announce} />}
+        {view === 'setup' && <SetupAssistant key={`${snapshot.config.revision}:${snapshot.pending?.revision ?? ''}`} client={client} snapshot={snapshot} onApplied={() => load()} announce={announce} />}
         {view === 'flows' && <FlowExplorer client={client} announce={announce} onPolicyChanged={() => load()} />}
         {view === 'rules' && <RulesEditor client={client} announce={announce} onPolicyChanged={() => load()} />}
       </main>

@@ -8,19 +8,20 @@ The accepted architecture and delivery plan is in [docs/PLAN.md](docs/PLAN.md).
 
 ## Development status
 
-Delivery stages 1 through 10 are implemented. The local management API includes
+Delivery stages 1 through 11 are implemented. The local management API includes
 transactional configuration, capture-interface and MIDI discovery, MIDI
 audition and panic, bounded flow snapshots, temporary mute/solo controls, and
-ordered persistent-rule mutations. Stage 11 is underway: the embedded
-React/TypeScript foundation and first setup-assistant slice are implemented;
+ordered persistent-rule mutations. The embedded React/TypeScript foundation
+and setup assistant are implemented;
 the first bounded flow explorer now supports live search, sorting, selection,
 observed rates, authoritative rule/musical annotations, and temporary mute/solo
 control. Exact-flow pinning and generalized protocol/destination-service rule
 creation are implemented with optimistic revisions. Every flow exposes a
 backend-authored decision explanation, and `/rules` provides revision-guarded
 ordering, editing, duplication, deletion, shadow warnings, current match counts,
-and atomic import/export. Completing the setup assistant and its durable
-pending-configuration path is next.
+and atomic import/export. Restart-required drafts can be durably saved without
+changing the active process, then revised or discarded before restart. The
+piano roll and musical viewer are next.
 
 ## Commands
 

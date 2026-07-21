@@ -24,10 +24,11 @@ import (
 
 // Status is the transport-neutral runtime status returned by Backend.
 type Status struct {
-	State    string   `json:"state"`
-	Revision Revision `json:"revision"`
-	Writable bool     `json:"writable"`
-	Warning  string   `json:"warning,omitempty"`
+	State           string   `json:"state"`
+	Revision        Revision `json:"revision"`
+	PendingRevision Revision `json:"pending_revision,omitempty"`
+	Writable        bool     `json:"writable"`
+	Warning         string   `json:"warning,omitempty"`
 }
 
 // Revision is an opaque HTTP validator supplied by Backend.
@@ -55,8 +56,11 @@ type Validation struct {
 type Backend interface {
 	Status(context.Context) (Status, error)
 	Config(context.Context) (ConfigDocument, error)
+	PendingConfig(context.Context) (ConfigDocument, error)
 	ValidateConfig(context.Context, config.Config) (Validation, error)
 	UpdateConfig(context.Context, Revision, config.Config) (ConfigDocument, error)
+	StageConfig(context.Context, Revision, config.Config) (ConfigDocument, error)
+	CancelPendingConfig(context.Context, Revision) (ConfigDocument, error)
 	Interfaces(context.Context) (InterfacesDocument, error)
 	MIDIDevices(context.Context) (MIDIDevicesDocument, error)
 	AuditionMIDI(context.Context, MIDIAuditionRequest) error
@@ -181,6 +185,9 @@ func (handler *handler) ServeHTTP(response http.ResponseWriter, request *http.Re
 		if route == "/api/v1/config" && method == http.MethodPut {
 			handler.observer.ConfigUpdate(configUpdateResult(status))
 		}
+		if route == "/api/v1/config/pending" && (method == http.MethodPut || method == http.MethodDelete) {
+			handler.observer.ConfigUpdate(configUpdateResult(status))
+		}
 	}()
 	response = observedResponse
 	setResponseSecurityHeaders(response.Header())
@@ -212,6 +219,17 @@ func (handler *handler) ServeHTTP(response http.ResponseWriter, request *http.Re
 			return
 		}
 		handler.validateConfig(response, request)
+	case "/api/v1/config/pending":
+		switch request.Method {
+		case http.MethodGet, http.MethodHead:
+			handler.pendingConfig(response, request)
+		case http.MethodPut:
+			handler.stageConfig(response, request)
+		case http.MethodDelete:
+			handler.cancelPendingConfig(response, request)
+		default:
+			methodNotAllowed(response, request, "GET, HEAD, PUT, DELETE")
+		}
 	case interfacesPath:
 		handler.serveInterfaces(response, request)
 	case midiDevicesPath:
@@ -267,6 +285,15 @@ func (handler *handler) config(response http.ResponseWriter, request *http.Reque
 	writeConfig(response, request, document)
 }
 
+func (handler *handler) pendingConfig(response http.ResponseWriter, request *http.Request) {
+	document, err := handler.backend.PendingConfig(request.Context())
+	if err != nil {
+		writeBackendError(response, request, err)
+		return
+	}
+	writeConfig(response, request, document)
+}
+
 func (handler *handler) validateConfig(response http.ResponseWriter, request *http.Request) {
 	configuration, ok := decodeConfigRequest(response, request)
 	if !ok {
@@ -303,6 +330,50 @@ func (handler *handler) updateConfig(response http.ResponseWriter, request *http
 		return
 	}
 	document, err := handler.backend.UpdateConfig(request.Context(), expected, configuration)
+	if err != nil {
+		writeBackendError(response, request, err)
+		return
+	}
+	writeConfig(response, request, document)
+}
+
+func (handler *handler) stageConfig(response http.ResponseWriter, request *http.Request) {
+	expected, err := parseIfMatch(request.Header.Values("If-Match"))
+	if err != nil {
+		status := http.StatusBadRequest
+		code := "invalid_if_match"
+		if errors.Is(err, errMissingIfMatch) {
+			status = http.StatusPreconditionRequired
+			code = "precondition_required"
+		}
+		writeProblem(response, request, status, code, err.Error(), nil)
+		return
+	}
+	configuration, ok := decodeConfigRequest(response, request)
+	if !ok {
+		return
+	}
+	document, err := handler.backend.StageConfig(request.Context(), Revision(expected), configuration)
+	if err != nil {
+		writeBackendError(response, request, err)
+		return
+	}
+	writeConfig(response, request, document)
+}
+
+func (handler *handler) cancelPendingConfig(response http.ResponseWriter, request *http.Request) {
+	expected, err := parseIfMatch(request.Header.Values("If-Match"))
+	if err != nil {
+		status := http.StatusBadRequest
+		code := "invalid_if_match"
+		if errors.Is(err, errMissingIfMatch) {
+			status = http.StatusPreconditionRequired
+			code = "precondition_required"
+		}
+		writeProblem(response, request, status, code, err.Error(), nil)
+		return
+	}
+	document, err := handler.backend.CancelPendingConfig(request.Context(), Revision(expected))
 	if err != nil {
 		writeBackendError(response, request, err)
 		return

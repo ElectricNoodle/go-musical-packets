@@ -139,7 +139,7 @@ func (backend *managementBackend) flowRuntimeAvailable(ctx context.Context, requ
 	}
 	if requireReadyPolicy {
 		state := backend.controller.store.current.Load().state
-		if state != ControllerStateReady {
+		if state != ControllerStateReady && state != ControllerStateRestartPending {
 			return managementFlowUnavailable(fmt.Errorf("runtime configuration state is %s", state))
 		}
 	}
