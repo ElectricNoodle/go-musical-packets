@@ -192,11 +192,21 @@ precedence within each tier, not between those tiers.
 `GET /api/v1/flows` returns retained bidirectional flows newest-first, with a
 stable ID, canonical endpoints, protocol, first and last observation times,
 packet and byte counters, directional packet counters, and current mute/solo
-flags. The default limit is 500 and `?limit=N` accepts 1 through 5000. The
+flags. Every flow also includes its effective `state`, user-facing `channel`,
+`rule_tier`, optional `rule_id`, deterministic `mode`, and numeric root pitch
+class. The default limit is 500 and `?limit=N` accepts 1 through 5000. The
 response also reports the registry total, whether the result is truncated, and
-the complete temporary overlay. Rates and controlling-rule explanations are
-not inferred from these aggregate snapshots; later event sampling will provide
-those views accurately.
+the complete temporary overlay.
+
+The registry retains the latest normalized metadata event for each bounded
+flow; packet payload is absent from that type. One immutable selector and
+overlay generation evaluates all flows in an API response, so a config or
+overlay publication cannot produce a mixed page. Directional, size, and flag
+rules are evaluated against that latest event, meaning the explanation can
+truthfully change when the most recently observed packet travels in the other
+direction. The API exposes cumulative counters rather than inventing a rate
+window; the frontend labels deltas between successive snapshots as observed
+rates.
 
 Mute and solo requests use strict JSON:
 

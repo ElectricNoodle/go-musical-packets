@@ -50,6 +50,12 @@ type FlowSnapshot struct {
 	PacketsBToA uint64       `json:"packets_b_to_a"`
 	Muted       bool         `json:"muted"`
 	Soloed      bool         `json:"soloed"`
+	State       string       `json:"state"`
+	Channel     uint8        `json:"channel"`
+	RuleID      string       `json:"rule_id,omitempty"`
+	RuleTier    string       `json:"rule_tier"`
+	Mode        string       `json:"mode"`
+	Root        uint8        `json:"root"`
 }
 
 // FlowOverlay is the complete temporary, non-persisted mute and solo state.

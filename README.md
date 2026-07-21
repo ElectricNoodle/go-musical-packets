@@ -14,8 +14,8 @@ audition and panic, bounded flow snapshots, temporary mute/solo controls, and
 ordered persistent-rule mutations. Stage 11 is underway: the embedded
 React/TypeScript foundation and first setup-assistant slice are implemented;
 the first bounded flow explorer now supports live search, sorting, selection,
-and temporary mute/solo control. Rule and musical annotations plus persistent
-pinning are next.
+observed rates, authoritative rule/musical annotations, and temporary mute/solo
+control. Persistent pinning and generalized rule creation are next.
 
 ## Commands
 

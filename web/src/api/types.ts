@@ -131,6 +131,12 @@ export interface FlowSnapshot {
   packets_b_to_a: number
   muted: boolean
   soloed: boolean
+  state: FlowState
+  channel: number
+  rule_id?: string
+  rule_tier: string
+  mode: string
+  root: number
 }
 
 export interface FlowOverlay {

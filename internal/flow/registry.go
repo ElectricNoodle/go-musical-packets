@@ -27,6 +27,9 @@ type Snapshot struct {
 	Bytes       uint64
 	PacketsAToB uint64
 	PacketsBToA uint64
+	// LastEvent is the newest normalized metadata observed for the flow. Packet
+	// payload bytes are not part of packet.Event and therefore cannot be retained.
+	LastEvent packet.Event
 }
 
 // ObserveResult describes the registry mutation caused by a packet.
@@ -109,6 +112,7 @@ func (r *Registry) Observe(event packet.Event) (ObserveResult, error) {
 			LastSeen:  event.CapturedAt,
 			Packets:   1,
 			Bytes:     uint64(event.WireLength),
+			LastEvent: event,
 		},
 		heapIndex: -1,
 	}
@@ -214,6 +218,9 @@ func (r *Registry) update(entry *registryEntry, event packet.Event, direction Di
 	if event.CapturedAt.After(entry.snapshot.LastSeen) {
 		entry.snapshot.LastSeen = event.CapturedAt
 		heap.Fix(&r.oldest, entry.heapIndex)
+	}
+	if !event.CapturedAt.Before(entry.snapshot.LastEvent.CapturedAt) {
+		entry.snapshot.LastEvent = event
 	}
 }
 

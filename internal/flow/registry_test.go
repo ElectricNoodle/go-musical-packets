@@ -37,6 +37,17 @@ func TestRegistryCombinesDirections(t *testing.T) {
 	if second.Flow.Packets != 2 || second.Flow.Bytes != 300 || second.Flow.PacketsAToB != 1 || second.Flow.PacketsBToA != 1 {
 		t.Fatalf("combined snapshot = %#v", second.Flow)
 	}
+	if second.Flow.LastEvent != reverse {
+		t.Fatalf("LastEvent = %#v, want newest reverse event %#v", second.Flow.LastEvent, reverse)
+	}
+	late := registryEvent(now.Add(500*time.Millisecond), a, b, 50)
+	third, err := registry.Observe(late)
+	if err != nil {
+		t.Fatalf("Observe(late) error = %v", err)
+	}
+	if third.Flow.LastEvent != reverse {
+		t.Fatalf("late packet replaced LastEvent: got %#v, want %#v", third.Flow.LastEvent, reverse)
+	}
 }
 
 func TestRegistryEvictsOldestAtCapacity(t *testing.T) {

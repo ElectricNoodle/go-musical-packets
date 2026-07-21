@@ -2,8 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ManagementClient } from '../api/client'
 import type { FlowOverlay, FlowPage, FlowSnapshot } from '../api/types'
 
-type SortKey = 'last_seen' | 'packets' | 'bytes' | 'protocol' | 'endpoint'
+type SortKey = 'last_seen' | 'packets' | 'bytes' | 'rate' | 'protocol' | 'endpoint'
 type SortDirection = 'ascending' | 'descending'
+
+interface FlowRate {
+  packets: number
+  bytes: number
+}
 
 interface FlowExplorerProps {
   client: ManagementClient
@@ -13,6 +18,8 @@ interface FlowExplorerProps {
 const flowLimit = 500
 const pollInterval = 3000
 const number = new Intl.NumberFormat()
+const rateNumber = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 })
+const rootNames = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B']
 
 function endpoint(flow: FlowSnapshot, side: 'endpoint_a' | 'endpoint_b') {
   const value = flow[side]
@@ -20,14 +27,21 @@ function endpoint(flow: FlowSnapshot, side: 'endpoint_a' | 'endpoint_b') {
   return value.port === 0 ? address : `${address}:${value.port}`
 }
 
-function compare(left: FlowSnapshot, right: FlowSnapshot, key: SortKey) {
+function compare(left: FlowSnapshot, right: FlowSnapshot, key: SortKey, rates: Map<string, FlowRate>) {
   switch (key) {
     case 'packets': return left.packets - right.packets
     case 'bytes': return left.bytes - right.bytes
+    case 'rate': return (rates.get(left.id)?.packets ?? -1) - (rates.get(right.id)?.packets ?? -1)
     case 'protocol': return left.protocol.localeCompare(right.protocol)
     case 'endpoint': return endpoint(left, 'endpoint_a').localeCompare(endpoint(right, 'endpoint_a'))
     case 'last_seen': return Date.parse(left.last_seen) - Date.parse(right.last_seen)
   }
+}
+
+function byteRate(value: number) {
+  if (value >= 1_000_000) return `${rateNumber.format(value / 1_000_000)} MB/s`
+  if (value >= 1_000) return `${rateNumber.format(value / 1_000)} kB/s`
+  return `${rateNumber.format(value)} B/s`
 }
 
 function applyOverlay(page: FlowPage, overlay: FlowOverlay): FlowPage {
@@ -49,26 +63,59 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
+  const [rates, setRates] = useState<Map<string, FlowRate>>(() => new Map())
+  const [annotationsPending, setAnnotationsPending] = useState(false)
   const loading = useRef(false)
+  const loadQueued = useRef(false)
   const overlayGeneration = useRef(0)
+  const previousSample = useRef<{ at: number; counters: Map<string, { packets: number; bytes: number }> } | null>(null)
 
   const load = useCallback(async (signal?: AbortSignal) => {
-    if (loading.current) return
+    if (loading.current) {
+      loadQueued.current = true
+      return
+    }
     loading.current = true
-    const generation = overlayGeneration.current
     try {
-      const next = await client.getFlows(flowLimit, signal)
-      if (generation !== overlayGeneration.current) return
-      setPage(next)
-      setSelected((current) => {
-        const retained = new Set(next.flows.map((flow) => flow.id))
-        return new Set([...current].filter((id) => retained.has(id)))
-      })
-      setUpdatedAt(new Date())
-      setError(null)
-    } catch (loadError) {
-      if (signal?.aborted) return
-      setError(loadError instanceof Error ? loadError.message : 'Could not load the live flow registry.')
+      do {
+        loadQueued.current = false
+        const generation = overlayGeneration.current
+        try {
+          const next = await client.getFlows(flowLimit, signal)
+          if (generation !== overlayGeneration.current) continue
+          const sampledAt = Date.now()
+          const previous = previousSample.current
+          const nextRates = new Map<string, FlowRate>()
+          if (previous && sampledAt > previous.at) {
+            const elapsed = (sampledAt - previous.at) / 1000
+            next.flows.forEach((flow) => {
+              const before = previous.counters.get(flow.id)
+              if (before && flow.packets >= before.packets && flow.bytes >= before.bytes) {
+                nextRates.set(flow.id, {
+                  packets: (flow.packets - before.packets) / elapsed,
+                  bytes: (flow.bytes - before.bytes) / elapsed,
+                })
+              }
+            })
+          }
+          previousSample.current = {
+            at: sampledAt,
+            counters: new Map(next.flows.map((flow) => [flow.id, { packets: flow.packets, bytes: flow.bytes }])),
+          }
+          setRates(nextRates)
+          setPage(next)
+          setSelected((current) => {
+            const retained = new Set(next.flows.map((flow) => flow.id))
+            return new Set([...current].filter((id) => retained.has(id)))
+          })
+          setUpdatedAt(new Date())
+          setAnnotationsPending(false)
+          setError(null)
+        } catch (loadError) {
+          if (signal?.aborted) break
+          setError(loadError instanceof Error ? loadError.message : 'Could not load the live flow registry.')
+        }
+      } while (loadQueued.current && !signal?.aborted)
     } finally {
       loading.current = false
     }
@@ -94,12 +141,17 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
       flow.protocol,
       endpoint(flow, 'endpoint_a'),
       endpoint(flow, 'endpoint_b'),
+      flow.state,
+      flow.mode,
+      flow.rule_tier,
+      flow.rule_id ?? '',
+      String(flow.channel),
     ].some((value) => value.toLocaleLowerCase().includes(needle)))
     return [...filtered].sort((left, right) => {
-      const order = compare(left, right, sortKey)
+      const order = compare(left, right, sortKey, rates)
       return sortDirection === 'ascending' ? order : -order
     })
-  }, [page, query, sortDirection, sortKey])
+  }, [page, query, rates, sortDirection, sortKey])
 
   const changeSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -120,9 +172,12 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
         : await client.setSoloedFlows(flowIDs)
       overlayGeneration.current += 1
       setPage((current) => current ? applyOverlay(current, overlay) : current)
+      setAnnotationsPending(true)
       announce(`${kind === 'mute' ? 'Mute' : 'Solo'} state updated for ${flowIDs.length} flow${flowIDs.length === 1 ? '' : 's'}.`, 'success')
+      void load()
     } catch (mutationError) {
       overlayGeneration.current += 1
+      setAnnotationsPending(false)
       announce(mutationError instanceof Error ? mutationError.message : `Could not update ${kind} state.`, 'error')
     } finally {
       setBusy(false)
@@ -139,6 +194,7 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
 
   const clearTemporaryState = async () => {
     overlayGeneration.current += 1
+    setAnnotationsPending(true)
     setBusy(true)
     try {
       await client.setMutedFlows([])
@@ -146,6 +202,7 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
       overlayGeneration.current += 1
       setPage((current) => current ? applyOverlay(current, overlay) : current)
       announce('All temporary mute and solo state cleared.', 'success')
+      void load()
     } catch (mutationError) {
       overlayGeneration.current += 1
       announce(mutationError instanceof Error ? mutationError.message : 'Could not clear temporary flow state.', 'error')
@@ -179,6 +236,7 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
           <strong>{page ? number.format(page.total) : '—'}</strong>
           <span>active flows</span>
           <small>{updatedAt ? `Updated ${updatedAt.toLocaleTimeString()}` : 'Connecting…'}</small>
+          <button type="button" onClick={() => void load()}>Refresh now</button>
         </div>
       </header>
 
@@ -213,7 +271,10 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
               <th aria-sort={sortKey === 'endpoint' ? sortDirection : 'none'}><button type="button" onClick={() => changeSort('endpoint')}>Canonical endpoints</button></th>
               <th aria-sort={sortKey === 'packets' ? sortDirection : 'none'}><button type="button" onClick={() => changeSort('packets')}>Packets</button></th>
               <th aria-sort={sortKey === 'bytes' ? sortDirection : 'none'}><button type="button" onClick={() => changeSort('bytes')}>Bytes</button></th>
+              <th aria-sort={sortKey === 'rate' ? sortDirection : 'none'}><button type="button" onClick={() => changeSort('rate')}>Observed rate</button></th>
               <th aria-sort={sortKey === 'last_seen' ? sortDirection : 'none'}><button type="button" onClick={() => changeSort('last_seen')}>Last activity</button></th>
+              <th>Musical identity</th>
+              <th>Decision</th>
               <th>Temporary state</th>
             </tr>
           </thead>
@@ -230,7 +291,10 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
                 <td><span className="endpoint-pair"><code>{endpoint(flow, 'endpoint_a')}</code><span aria-hidden="true">⇄</span><code>{endpoint(flow, 'endpoint_b')}</code></span><small>{number.format(flow.packets_a_to_b)} → / {number.format(flow.packets_b_to_a)} ←</small></td>
                 <td className="numeric">{number.format(flow.packets)}</td>
                 <td className="numeric">{number.format(flow.bytes)}</td>
+                <td>{rates.has(flow.id) ? <><strong className="flow-rate">{rateNumber.format(rates.get(flow.id)?.packets ?? 0)} pkt/s</strong><small>{byteRate(rates.get(flow.id)?.bytes ?? 0)}</small></> : <span className="rate-pending">Sampling…</span>}</td>
                 <td><time dateTime={flow.last_seen}>{new Date(flow.last_seen).toLocaleTimeString()}</time><small>{new Date(flow.first_seen).toLocaleDateString()}</small></td>
+                <td><span className="musical-identity"><strong>{rootNames[flow.root] ?? `PC ${flow.root}`} {flow.mode}</strong><small>Channel {flow.channel}</small></span></td>
+                <td>{annotationsPending ? <span className="decision decision--pending">refreshing</span> : <><span className={`decision decision--${flow.state}`}>{flow.state}</span><small>{flow.rule_id ? `${flow.rule_tier} · ${flow.rule_id}` : flow.rule_tier}</small></>}</td>
                 <td><div className="flow-actions"><button type="button" aria-pressed={flow.muted} disabled={busy} onClick={() => toggleFlow('mute', flow)}>{flow.muted ? 'Unmute' : 'Mute'}</button><button type="button" aria-pressed={flow.soloed} disabled={busy} onClick={() => toggleFlow('solo', flow)}>{flow.soloed ? 'Unsolo' : 'Solo'}</button></div></td>
               </tr>
             ))}

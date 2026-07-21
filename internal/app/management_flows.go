@@ -8,6 +8,7 @@ import (
 
 	"github.com/ElectricNoodle/go-musical-packets/internal/flow"
 	"github.com/ElectricNoodle/go-musical-packets/internal/managementapi"
+	"github.com/ElectricNoodle/go-musical-packets/internal/music"
 )
 
 const maximumManagementFlowPageLimit = 5000
@@ -28,13 +29,21 @@ func (backend *managementBackend) Flows(ctx context.Context, request managementa
 		return managementapi.FlowPage{}, err
 	}
 
+	policy := backend.controller.store.current.Load()
+	if policy == nil || policy.selector == nil {
+		return managementapi.FlowPage{}, managementFlowUnavailable(errors.New("runtime policy is unavailable"))
+	}
 	snapshots, total := backend.registry.RecentSnapshots(request.Limit)
-	overlay := backend.controller.Overlay()
+	overlay := policy.overlay
 	flows := make([]managementapi.FlowSnapshot, 0, len(snapshots))
 	for _, snapshot := range snapshots {
 		_, muted := overlay.Muted[snapshot.ID]
 		_, soloed := overlay.Soloed[snapshot.ID]
-		flows = append(flows, managementFlowSnapshot(snapshot, muted, soloed))
+		converted, err := managementFlowSnapshot(snapshot, muted, soloed, policy.selector, overlay)
+		if err != nil {
+			return managementapi.FlowPage{}, fmt.Errorf("annotate flow %q: %w", snapshot.ID, err)
+		}
+		flows = append(flows, converted)
 	}
 	return managementapi.FlowPage{
 		Flows:     flows,
@@ -135,7 +144,20 @@ func (backend *managementBackend) flowRuntimeAvailable(ctx context.Context, requ
 	return nil
 }
 
-func managementFlowSnapshot(snapshot flow.Snapshot, muted, soloed bool) managementapi.FlowSnapshot {
+func managementFlowSnapshot(
+	snapshot flow.Snapshot,
+	muted, soloed bool,
+	selector *flow.Selector,
+	overlay flow.Overlay,
+) (managementapi.FlowSnapshot, error) {
+	selection, err := selector.Evaluate(snapshot.LastEvent, overlay)
+	if err != nil {
+		return managementapi.FlowSnapshot{}, fmt.Errorf("evaluate current policy: %w", err)
+	}
+	identity, err := music.IdentityForFlowID(snapshot.ID)
+	if err != nil {
+		return managementapi.FlowSnapshot{}, fmt.Errorf("derive musical identity: %w", err)
+	}
 	return managementapi.FlowSnapshot{
 		ID:       snapshot.ID,
 		Protocol: string(snapshot.Key.Protocol),
@@ -155,7 +177,13 @@ func managementFlowSnapshot(snapshot flow.Snapshot, muted, soloed bool) manageme
 		PacketsBToA: snapshot.PacketsBToA,
 		Muted:       muted,
 		Soloed:      soloed,
-	}
+		State:       string(selection.State),
+		Channel:     selection.Channel,
+		RuleID:      selection.RuleID,
+		RuleTier:    selection.Tier,
+		Mode:        identity.Mode.String(),
+		Root:        identity.Root,
+	}, nil
 }
 
 func managementFlowOverlay(overlay flow.Overlay) managementapi.FlowOverlay {

@@ -17,6 +17,7 @@ import (
 	"github.com/ElectricNoodle/go-musical-packets/internal/config"
 	"github.com/ElectricNoodle/go-musical-packets/internal/flow"
 	"github.com/ElectricNoodle/go-musical-packets/internal/managementapi"
+	"github.com/ElectricNoodle/go-musical-packets/internal/music"
 	"github.com/ElectricNoodle/go-musical-packets/internal/packet"
 )
 
@@ -72,6 +73,15 @@ func TestManagementBackendFlowsPagesAndConvertsSnapshots(t *testing.T) {
 	if !gotFirst.Muted || gotFirst.Soloed || gotFirst.Packets != 2 || gotFirst.PacketsAToB != 1 || gotFirst.PacketsBToA != 1 {
 		t.Fatalf("converted first flow = %#v, want muted bidirectional counters", gotFirst)
 	}
+	identity, err := music.IdentityForFlowID(gotFirst.ID)
+	if err != nil {
+		t.Fatalf("IdentityForFlowID() error = %v", err)
+	}
+	if gotFirst.State != string(flow.StateIgnore) || gotFirst.Channel != configuration.Mapping.DefaultChannel ||
+		gotFirst.RuleID != "" || gotFirst.RuleTier != "temporary_mute" ||
+		gotFirst.Mode != identity.Mode.String() || gotFirst.Root != identity.Root {
+		t.Fatalf("converted first flow annotations = %#v, want current mute decision and identity %#v", gotFirst, identity)
+	}
 	if gotFirst.Protocol != string(updatedFirst.Flow.Key.Protocol) ||
 		gotFirst.EndpointA.Address != updatedFirst.Flow.Key.A.Addr.String() ||
 		gotFirst.EndpointA.Port != updatedFirst.Flow.Key.A.Port ||
@@ -84,6 +94,9 @@ func TestManagementBackendFlowsPagesAndConvertsSnapshots(t *testing.T) {
 	if !page.Flows[1].Soloed || page.Flows[1].Muted {
 		t.Fatalf("converted third flow = %#v, want soloed only", page.Flows[1])
 	}
+	if page.Flows[1].State != string(flow.StateMonitor) || page.Flows[1].RuleTier != "default" {
+		t.Fatalf("converted third flow annotations = %#v, want default monitor decision", page.Flows[1])
+	}
 	if !reflect.DeepEqual(page.Overlay.Muted, []string{first.Flow.ID}) || !reflect.DeepEqual(page.Overlay.Soloed, []string{third.Flow.ID}) {
 		t.Fatalf("Flows() overlay = %#v", page.Overlay)
 	}
@@ -91,6 +104,60 @@ func TestManagementBackendFlowsPagesAndConvertsSnapshots(t *testing.T) {
 	for _, limit := range []int{0, maximumManagementFlowPageLimit + 1} {
 		_, err := backend.Flows(context.Background(), managementapi.FlowPageRequest{Limit: limit})
 		assertManagementBackendError(t, err, managementapi.ErrorInvalid, "invalid_flow_page")
+	}
+}
+
+func TestManagementBackendFlowAnnotationsUseLatestEventAndCurrentPolicy(t *testing.T) {
+	configuration := managementTestConfig()
+	configuration.Rules = config.RulesConfig{{
+		ID: "https-destination", Name: "HTTPS destination", Enabled: true,
+		Match:  config.RuleMatchConfig{DestinationPorts: &config.PortRangeConfig{Minimum: 443, Maximum: 443}},
+		Action: config.RuleActionConfig{State: config.FlowPlay, Channel: 9},
+	}}
+	controller := mustController(t, configuration, nil, nil)
+	registry := newManagementFlowRegistry(t, configuration)
+	forward := testPacket(41000, 443, time.Unix(100, 0))
+	observed, err := registry.Observe(forward)
+	if err != nil {
+		t.Fatalf("Observe(forward) error = %v", err)
+	}
+	var ready atomic.Bool
+	ready.Store(true)
+	backend := newTestManagementBackend(controller, &ready, context.Background(), registry)
+
+	page, err := backend.Flows(context.Background(), managementapi.FlowPageRequest{Limit: 1})
+	if err != nil {
+		t.Fatalf("Flows(forward) error = %v", err)
+	}
+	got := page.Flows[0]
+	if got.ID != observed.Flow.ID || got.State != string(flow.StatePlay) || got.Channel != 9 || got.RuleID != "https-destination" || got.RuleTier != "user" {
+		t.Fatalf("forward annotations = %#v, want matching user rule", got)
+	}
+
+	reverse := forward
+	reverse.CapturedAt = time.Unix(101, 0)
+	reverse.Source, reverse.Destination = reverse.Destination, reverse.Source
+	if _, err := registry.Observe(reverse); err != nil {
+		t.Fatalf("Observe(reverse) error = %v", err)
+	}
+	page, err = backend.Flows(context.Background(), managementapi.FlowPageRequest{Limit: 1})
+	if err != nil {
+		t.Fatalf("Flows(reverse) error = %v", err)
+	}
+	got = page.Flows[0]
+	if got.State != string(flow.StateMonitor) || got.Channel != configuration.Mapping.DefaultChannel || got.RuleID != "" || got.RuleTier != "default" {
+		t.Fatalf("reverse annotations = %#v, want current default decision", got)
+	}
+
+	if _, err := controller.ReplaceMute(map[string]struct{}{got.ID: {}}); err != nil {
+		t.Fatalf("ReplaceMute() error = %v", err)
+	}
+	page, err = backend.Flows(context.Background(), managementapi.FlowPageRequest{Limit: 1})
+	if err != nil {
+		t.Fatalf("Flows(muted) error = %v", err)
+	}
+	if got = page.Flows[0]; got.State != string(flow.StateIgnore) || got.RuleTier != "temporary_mute" || !got.Muted {
+		t.Fatalf("muted annotations = %#v, want current temporary mute decision", got)
 	}
 }
 

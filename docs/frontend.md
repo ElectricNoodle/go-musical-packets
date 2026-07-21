@@ -66,14 +66,17 @@ is hidden, and never starts a second request while the previous snapshot is in
 flight. This keeps the browser workload bounded independently of capture rate.
 
 The table supports address, port, protocol, and pseudonymous-ID search; sortable
-protocol, endpoint, packet, byte, and last-activity columns; canonical IPv4 and
-IPv6 endpoint display; visible-row and individual selection; and responsive
-horizontal scrolling. Mute and solo changes replace the complete authoritative
-process-local set exposed by the management API. Selected flows can be muted as
-a group or used as the complete solo set, and every row also provides toggles.
+protocol, endpoint, packet, byte, observed-rate, and last-activity columns;
+canonical IPv4 and IPv6 endpoint display; visible-row and individual selection;
+and responsive horizontal scrolling. Successive authoritative counters provide
+packet and byte rates over the actual browser sampling interval. Mute and solo
+changes replace the complete authoritative process-local set exposed by the
+management API. Selected flows can be muted as a group or used as the complete
+solo set, and every row also provides toggles.
 
-The current flow snapshot does not yet expose evaluated rule precedence,
-play/monitor state, channel, mode, root, or instantaneous rates. Adding those
-authoritative annotations, followed by pinning and generalized rule creation,
-is the remaining flow-explorer work rather than deriving potentially incorrect
-answers in the browser.
+Each row shows the backend-evaluated play, monitor, or ignore state; effective
+channel; precedence tier and controlling rule ID; and deterministic root/mode
+identity. The backend evaluates the latest normalized event for every flow
+against one atomic policy generation, so the browser never reimplements rule
+precedence. Pinning, generalized rule creation, and a full match explanation
+are the remaining flow-explorer work.

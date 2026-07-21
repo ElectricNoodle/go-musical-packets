@@ -1,7 +1,6 @@
 package music
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
@@ -62,9 +61,12 @@ func (m *Mapper) Map(input MapInput) (NoteEvent, error) {
 
 	key, direction := flow.Canonicalize(input.Packet)
 	flowID := key.ID(m.config.Seed)
-	identity := sha256.Sum256([]byte(flowID))
-	mode := Mode(identity[0] % uint8(modeCount))
-	root := identity[1] % 12
+	identity, err := IdentityForFlowID(flowID)
+	if err != nil {
+		return NoteEvent{}, fmt.Errorf("map packet flow identity: %w", err)
+	}
+	mode := identity.Mode
+	root := identity.Root
 
 	candidates := scaleNotes(mode, root, m.config.MinimumNote, m.config.MaximumNote)
 	if len(candidates) == 0 {
