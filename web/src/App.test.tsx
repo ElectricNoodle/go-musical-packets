@@ -1,8 +1,10 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { stubClient } from './test/fixtures'
+
+afterEach(() => window.history.replaceState(null, '', '/'))
 
 describe('setup assistant', () => {
   it('loads runtime boundaries and applies a validated live-safe change', async () => {
@@ -63,5 +65,16 @@ describe('setup assistant', () => {
     await user.click(await screen.findByRole('button', { name: /all notes off/i }))
     await waitFor(() => expect(client.panicMIDI).toHaveBeenCalledOnce())
     expect(screen.getByRole('status')).toHaveTextContent(/all notes off sent/i)
+  })
+
+  it('navigates to the flow explorer without reloading the application shell', async () => {
+    const client = stubClient()
+    const user = userEvent.setup()
+    render(<App client={client} />)
+
+    await user.click(await screen.findByRole('link', { name: 'Flows' }))
+
+    expect(await screen.findByRole('heading', { name: /find the traffic worth hearing/i })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/flows')
   })
 })

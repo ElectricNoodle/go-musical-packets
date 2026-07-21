@@ -57,3 +57,23 @@ Frontend tests use Vitest, jsdom, and Testing Library. They cover YAML/ETag
 transport, live-safe validation and apply, restart classification, and MIDI
 panic. The UI uses semantic controls, keyboard-visible focus, non-color status
 cues, responsive layouts, and reduced-motion behavior.
+
+## Flow explorer
+
+The first flow-explorer slice is available at `/flows`. It reads at most 500
+newest registry entries every three seconds, pauses polling while the document
+is hidden, and never starts a second request while the previous snapshot is in
+flight. This keeps the browser workload bounded independently of capture rate.
+
+The table supports address, port, protocol, and pseudonymous-ID search; sortable
+protocol, endpoint, packet, byte, and last-activity columns; canonical IPv4 and
+IPv6 endpoint display; visible-row and individual selection; and responsive
+horizontal scrolling. Mute and solo changes replace the complete authoritative
+process-local set exposed by the management API. Selected flows can be muted as
+a group or used as the complete solo set, and every row also provides toggles.
+
+The current flow snapshot does not yet expose evaluated rule precedence,
+play/monitor state, channel, mode, root, or instantaneous rates. Adding those
+authoritative annotations, followed by pinning and generalized rule creation,
+is the remaining flow-explorer work rather than deriving potentially incorrect
+answers in the browser.

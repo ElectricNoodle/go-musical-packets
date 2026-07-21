@@ -13,7 +13,9 @@ transactional configuration, capture-interface and MIDI discovery, MIDI
 audition and panic, bounded flow snapshots, temporary mute/solo controls, and
 ordered persistent-rule mutations. Stage 11 is underway: the embedded
 React/TypeScript foundation and first setup-assistant slice are implemented;
-the flow explorer is next.
+the first bounded flow explorer now supports live search, sorting, selection,
+and temporary mute/solo control. Rule and musical annotations plus persistent
+pinning are next.
 
 ## Commands
 

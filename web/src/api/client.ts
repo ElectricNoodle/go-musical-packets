@@ -2,6 +2,8 @@ import { parse, stringify } from 'yaml'
 import type {
   ConfigDocument,
   Configuration,
+  FlowOverlay,
+  FlowPage,
   InterfacesDocument,
   MIDIDevicesDocument,
   ProblemDocument,
@@ -32,6 +34,9 @@ export interface ManagementClient {
   updateConfig(config: Configuration, revision: string, signal?: AbortSignal): Promise<ConfigDocument>
   auditionMIDI(channel: number, signal?: AbortSignal): Promise<void>
   panicMIDI(signal?: AbortSignal): Promise<void>
+  getFlows(limit?: number, signal?: AbortSignal): Promise<FlowPage>
+  setMutedFlows(flowIDs: string[], signal?: AbortSignal): Promise<FlowOverlay>
+  setSoloedFlows(flowIDs: string[], signal?: AbortSignal): Promise<FlowOverlay>
 }
 
 const yamlHeaders = {
@@ -109,5 +114,20 @@ export function createManagementClient(fetcher: typeof fetch = fetch): Managemen
     panicMIDI: async (signal) => {
       await request('/api/v1/midi/panic', { method: 'POST', signal })
     },
+    getFlows: (limit = 500, signal) => json<FlowPage>(`/api/v1/flows?limit=${encodeURIComponent(limit)}`, { signal }),
+    setMutedFlows: (flowIDs, signal) =>
+      json<FlowOverlay>('/api/v1/flows/mute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flow_ids: flowIDs }),
+        signal,
+      }),
+    setSoloedFlows: (flowIDs, signal) =>
+      json<FlowOverlay>('/api/v1/flows/solo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flow_ids: flowIDs }),
+        signal,
+      }),
   }
 }

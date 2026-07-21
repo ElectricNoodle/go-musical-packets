@@ -48,4 +48,25 @@ describe('management client', () => {
       fields: ['capture.interface'],
     })
   })
+
+  it('loads bounded flows and sends complete overlay replacements', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        flows: [], overlay: { muted: [], soloed: [] }, total: 0, limit: 250, truncated: false,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ muted: ['flow-a'], soloed: [] }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      }))
+    const client = createManagementClient(fetcher)
+
+    await client.getFlows(250)
+    await client.setMutedFlows(['flow-a'])
+
+    expect(fetcher).toHaveBeenNthCalledWith(1, '/api/v1/flows?limit=250', expect.objectContaining({ cache: 'no-store' }))
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/v1/flows/mute', expect.objectContaining({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flow_ids: ['flow-a'] }),
+    }))
+  })
 })

@@ -113,6 +113,39 @@ export interface RuntimeSnapshot {
   midi: MIDIDevicesDocument
 }
 
+export interface FlowEndpoint {
+  address: string
+  port: number
+}
+
+export interface FlowSnapshot {
+  id: string
+  protocol: string
+  endpoint_a: FlowEndpoint
+  endpoint_b: FlowEndpoint
+  first_seen: string
+  last_seen: string
+  packets: number
+  bytes: number
+  packets_a_to_b: number
+  packets_b_to_a: number
+  muted: boolean
+  soloed: boolean
+}
+
+export interface FlowOverlay {
+  muted: string[]
+  soloed: string[]
+}
+
+export interface FlowPage {
+  flows: FlowSnapshot[]
+  overlay: FlowOverlay
+  total: number
+  limit: number
+  truncated: boolean
+}
+
 export interface ProblemDocument {
   status: number
   code: string
