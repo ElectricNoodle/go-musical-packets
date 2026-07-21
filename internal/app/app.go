@@ -33,10 +33,14 @@ var errMIDIDisabled = errors.New("MIDI output is disabled")
 // Dependencies contains operating-system boundaries that tests and embedding
 // programs may replace. Zero fields use the production implementations.
 type Dependencies struct {
-	Interfaces    func() ([]capture.Interface, error)
-	OpenLive      func(capture.LiveConfig) (capture.Source, error)
-	NewMIDIDriver func() (midi.Driver, error)
-	Listen        func(network, address string) (net.Listener, error)
+	Interfaces     func() ([]capture.Interface, error)
+	OpenLive       func(capture.LiveConfig) (capture.Source, error)
+	OpenReplayFile func(path string) (capture.Source, error)
+	NewMIDIDriver  func() (midi.Driver, error)
+	Listen         func(network, address string) (net.Listener, error)
+	ReplayNow      func() time.Time
+	ReplayWait     func(context.Context, time.Duration) error
+	ReplayObserver pipeline.Observer
 }
 
 func (dependencies Dependencies) withDefaults() Dependencies {
@@ -46,11 +50,20 @@ func (dependencies Dependencies) withDefaults() Dependencies {
 	if dependencies.OpenLive == nil {
 		dependencies.OpenLive = capture.OpenLive
 	}
+	if dependencies.OpenReplayFile == nil {
+		dependencies.OpenReplayFile = capture.OpenReplayFile
+	}
 	if dependencies.NewMIDIDriver == nil {
 		dependencies.NewMIDIDriver = midi.NewDriver
 	}
 	if dependencies.Listen == nil {
 		dependencies.Listen = net.Listen
+	}
+	if dependencies.ReplayNow == nil {
+		dependencies.ReplayNow = time.Now
+	}
+	if dependencies.ReplayWait == nil {
+		dependencies.ReplayWait = waitReplayDuration
 	}
 	return dependencies
 }
@@ -122,42 +135,13 @@ func RunWithDependencies(ctx context.Context, configuration config.Config, depen
 	if err != nil {
 		return fmt.Errorf("resolve HTTP listener port: %w", err)
 	}
-	userRules, err := configuration.FlowRules()
-	if err != nil {
-		return fmt.Errorf("build flow rules: %w", err)
-	}
-
-	var registry *flow.Registry
-	var selector *flow.Selector
-	var mapper *music.Mapper
+	var processing processingComponents
 	if configuration.Capture.Enabled {
-		registry, err = flow.NewRegistry(flow.RegistryConfig{
-			Seed:     configuration.Mapping.Seed,
-			Capacity: configuration.Performance.FlowRegistryCapacity,
-			TTL:      configuration.Performance.FlowTTL,
+		processing, err = newProcessingComponents(configuration, func(userRules []flow.Rule) []flow.Rule {
+			return httpSafetyRules(httpPort, userRules)
 		})
 		if err != nil {
-			return fmt.Errorf("initialize flow registry: %w", err)
-		}
-		selector, err = flow.NewSelector(flow.SelectorConfig{
-			Seed:        configuration.Mapping.Seed,
-			Default:     flow.Action{State: flow.State(configuration.Mapping.DefaultState), Channel: configuration.Mapping.DefaultChannel},
-			SafetyRules: httpSafetyRules(httpPort, userRules),
-			UserRules:   userRules,
-		})
-		if err != nil {
-			return fmt.Errorf("initialize flow selector: %w", err)
-		}
-		mapper, err = music.NewMapper(music.MapperConfig{
-			Seed:            configuration.Mapping.Seed,
-			Origin:          configuration.Instance.ID,
-			MinimumNote:     configuration.Mapping.MinimumNote,
-			MaximumNote:     configuration.Mapping.MaximumNote,
-			MinimumDuration: configuration.Mapping.MinimumDuration,
-			MaximumDuration: configuration.Mapping.MaximumDuration,
-		})
-		if err != nil {
-			return fmt.Errorf("initialize music mapper: %w", err)
+			return err
 		}
 	}
 
@@ -165,42 +149,16 @@ func RunWithDependencies(ctx context.Context, configuration config.Config, depen
 	var managerCancel context.CancelFunc
 	var managerDone chan error
 	if configuration.MIDI.Enabled {
-		driver, driverErr := dependencies.NewMIDIDriver()
-		if driverErr != nil {
-			return fmt.Errorf("initialize MIDI driver: %w", driverErr)
+		midiRuntime, midiErr := newMIDIComponents(configuration, bundle, dependencies.NewMIDIDriver)
+		if midiErr != nil {
+			return midiErr
 		}
-		driverOwnedByManager := false
-		defer func() {
-			if !driverOwnedByManager {
-				runErr = errors.Join(runErr, driver.Close())
-			}
-		}()
-
-		manager, err = midi.NewManager(midi.ManagerConfig{
-			Driver:            driver,
-			ExactDeviceName:   configuration.MIDI.ExactDeviceName,
-			DeviceNamePattern: configuration.MIDI.DeviceNameRegexp,
-			PollInterval:      configuration.MIDI.PollInterval,
-			Observer:          bundle.MIDI,
-		})
-		if err != nil {
-			return fmt.Errorf("initialize MIDI manager: %w", err)
-		}
-		scheduler, err = midi.NewScheduler(midi.SchedulerConfig{
-			Sender:                   manager,
-			MaximumNotesPerSecond:    configuration.Performance.MaximumNotesPerSecond,
-			MaximumPolyphony:         configuration.Performance.MaximumPolyphony,
-			MinimumRetriggerInterval: configuration.Performance.MinimumRetriggerInterval,
-			Observer:                 bundle.MIDI,
-		})
-		if err != nil {
-			return fmt.Errorf("initialize MIDI scheduler: %w", err)
-		}
+		manager = midiRuntime.manager
+		scheduler = midiRuntime.scheduler
 
 		managerContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
 		managerCancel = cancel
 		managerDone = make(chan error, 1)
-		driverOwnedByManager = true
 		go func() { managerDone <- manager.Run(managerContext) }()
 
 		select {
@@ -241,18 +199,9 @@ func RunWithDependencies(ctx context.Context, configuration config.Config, depen
 		if scheduler != nil {
 			sink = scheduler
 		}
-		processor, err = pipeline.New(pipeline.Config{
-			Source:              source,
-			Registry:            registry,
-			Selector:            selector,
-			Mapper:              mapper,
-			Sink:                sink,
-			Observer:            bundle.Pipeline,
-			PacketQueueCapacity: configuration.Performance.PacketQueueCapacity,
-			NoteQueueCapacity:   configuration.Performance.NoteQueueCapacity,
-		})
+		processor, err = newProcessor(configuration, processing, source, sink, bundle.Pipeline)
 		if err != nil {
-			pipelineErr := errors.Join(fmt.Errorf("initialize packet pipeline: %w", err), source.Close())
+			pipelineErr := errors.Join(err, source.Close())
 			return shutdownStartup(pipelineErr, scheduler, managerCancel, managerDone)
 		}
 	}

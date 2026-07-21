@@ -1,0 +1,9 @@
+# Offline replay replaces live interface capture and cannot apply BPF syntax.
+capture:
+  enabled: true
+  bpf: ""
+
+# Processing-only by default. Enable MIDI and configure device selection to
+# hear rules whose action state is play.
+midi:
+  enabled: false

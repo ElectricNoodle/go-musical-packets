@@ -27,6 +27,7 @@ make build
 ./bin/musical-packets devices
 ./bin/musical-packets validate-config --config config.example.yaml
 ./bin/musical-packets run --config config.example.yaml
+./bin/musical-packets replay recording.pcap --config config.replay.example.yaml
 ```
 
 Native capture and MIDI prerequisites are documented in
@@ -35,5 +36,7 @@ Pipeline ownership, overload behavior, and the initial Prometheus contract are
 documented in [docs/pipeline.md](docs/pipeline.md).
 MIDI scheduling and reconnect behavior are documented in
 [docs/midi.md](docs/midi.md).
+PCAP replay configuration, pacing, and completion behavior are documented in
+[docs/replay.md](docs/replay.md).
 Standalone configuration, probes, exclusions, and shutdown are documented in
 [docs/standalone.md](docs/standalone.md).

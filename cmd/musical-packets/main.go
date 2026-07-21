@@ -50,6 +50,8 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return midi.RunHelper(args[1:], os.Stdin, stdout, stderr)
 	case "run":
 		return runStandalone(ctx, args[1:], stdout, stderr)
+	case "replay":
+		return runReplay(ctx, args[1:], stdout, stderr)
 	case "validate-config":
 		return validateConfig(args[1:], stdout, stderr)
 	case "version":
@@ -74,11 +76,36 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  run              run the standalone capture-to-MIDI service")
+	fmt.Fprintln(w, "  replay           replay a PCAP file through the MIDI pipeline")
 	fmt.Fprintln(w, "  validate-config  validate a YAML configuration file")
 	fmt.Fprintln(w, "  interfaces       list packet-capture interfaces")
 	fmt.Fprintln(w, "  devices          list MIDI output devices")
 	fmt.Fprintln(w, "  version          print build version information")
 	fmt.Fprintln(w, "  help             print this help")
+}
+
+func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	recordingPath, configurationPath, code := replayPaths(args, stdout, stderr)
+	if code >= 0 {
+		return code
+	}
+	configuration, err := config.Load(configurationPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load configuration: %v\n", err)
+		return 1
+	}
+	logger := applicationLogger(configuration.Logging, stderr)
+	logger.Info("starting PCAP replay", "path", recordingPath)
+	if err := app.RunReplay(ctx, configuration, recordingPath); err != nil {
+		logger.Error("PCAP replay stopped", "error", err)
+		return 1
+	}
+	if ctx.Err() != nil {
+		logger.Info("PCAP replay canceled", "path", recordingPath)
+		return 0
+	}
+	logger.Info("PCAP replay completed", "path", recordingPath)
+	return 0
 }
 
 func runStandalone(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -172,6 +199,68 @@ func writeConfigUsage(writer io.Writer, command string) {
 	fmt.Fprintf(writer, "usage: musical-packets %s --config <path>\n", command)
 	fmt.Fprintln(writer, "  -config string")
 	fmt.Fprintln(writer, "    \tpath to the YAML configuration file")
+}
+
+// replayPaths accepts the recording before or after --config. The standard
+// flag package stops parsing at the first positional argument, while the
+// documented command form puts the recording first.
+func replayPaths(args []string, stdout, stderr io.Writer) (recordingPath, configurationPath string, code int) {
+	usage := func(writer io.Writer) {
+		fmt.Fprintln(writer, "usage: musical-packets replay <recording.pcap> --config <path>")
+		fmt.Fprintln(writer, "  -config string")
+		fmt.Fprintln(writer, "    \tpath to the YAML configuration file")
+	}
+
+	positionals := make([]string, 0, 1)
+	positionalOnly := false
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if positionalOnly {
+			positionals = append(positionals, argument)
+			continue
+		}
+		switch {
+		case argument == "-h" || argument == "--help":
+			usage(stdout)
+			return "", "", 0
+		case argument == "-config" || argument == "--config":
+			if index+1 >= len(args) {
+				fmt.Fprintln(stderr, "replay: --config requires a value")
+				usage(stderr)
+				return "", "", 2
+			}
+			index++
+			configurationPath = args[index]
+		case strings.HasPrefix(argument, "-config="):
+			configurationPath = strings.TrimPrefix(argument, "-config=")
+		case strings.HasPrefix(argument, "--config="):
+			configurationPath = strings.TrimPrefix(argument, "--config=")
+		case argument == "--":
+			positionalOnly = true
+		case strings.HasPrefix(argument, "-"):
+			fmt.Fprintf(stderr, "replay: unknown flag %q\n", argument)
+			usage(stderr)
+			return "", "", 2
+		default:
+			positionals = append(positionals, argument)
+		}
+	}
+
+	if len(positionals) != 1 || (len(positionals) == 1 && strings.TrimSpace(positionals[0]) == "") {
+		if len(positionals) == 0 || (len(positionals) == 1 && strings.TrimSpace(positionals[0]) == "") {
+			fmt.Fprintln(stderr, "replay: recording path is required")
+		} else {
+			fmt.Fprintf(stderr, "replay: unexpected arguments: %s\n", strings.Join(positionals[1:], " "))
+		}
+		usage(stderr)
+		return "", "", 2
+	}
+	if strings.TrimSpace(configurationPath) == "" {
+		fmt.Fprintln(stderr, "replay: --config is required")
+		usage(stderr)
+		return "", "", 2
+	}
+	return positionals[0], configurationPath, -1
 }
 
 func printInterfaces(stdout, stderr io.Writer) int {
