@@ -198,8 +198,8 @@ func (backend *managementBackend) ValidateConfig(ctx context.Context, candidate 
 	}
 	return managementapi.Validation{
 		Revision:              backend.revisions.issue(current.revision),
-		HotFields:             append([]string(nil), validation.HotFields...),
-		RestartRequiredFields: append([]string(nil), validation.RestartRequiredFields...),
+		HotFields:             append(make([]string, 0, len(validation.HotFields)), validation.HotFields...),
+		RestartRequiredFields: append(make([]string, 0, len(validation.RestartRequiredFields)), validation.RestartRequiredFields...),
 	}, nil
 }
 

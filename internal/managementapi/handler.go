@@ -277,6 +277,12 @@ func (handler *handler) validateConfig(response http.ResponseWriter, request *ht
 		writeBackendError(response, request, err)
 		return
 	}
+	if validation.HotFields == nil {
+		validation.HotFields = make([]string, 0)
+	}
+	if validation.RestartRequiredFields == nil {
+		validation.RestartRequiredFields = make([]string, 0)
+	}
 	writeJSON(response, request, http.StatusOK, validation)
 }
 

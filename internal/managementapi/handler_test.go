@@ -306,6 +306,24 @@ func TestValidateConfigDecodesStrictRawYAML(t *testing.T) {
 	}
 }
 
+func TestValidateConfigEncodesEmptyFieldCollectionsAsArrays(t *testing.T) {
+	handler := mustHandler(t, &stubBackend{validateFunc: func(context.Context, config.Config) (Validation, error) {
+		return Validation{Revision: testRevisionA}, nil
+	}})
+	request := localRequestFor(http.MethodPost, "/api/v1/config/validate", "{}\n")
+	request.Header.Set("Content-Type", "application/yaml")
+	response := serve(handler, request)
+
+	assertStatus(t, response, http.StatusOK)
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode validation: %v", err)
+	}
+	if string(body["hot_fields"]) != "[]" || string(body["restart_required_fields"]) != "[]" {
+		t.Fatalf("validation collections = hot %s restart %s, want []", body["hot_fields"], body["restart_required_fields"])
+	}
+}
+
 func TestConfigRequestContentType(t *testing.T) {
 	handler := mustHandler(t, &stubBackend{})
 	for _, contentType := range []string{"", "text/yaml", "application/json", "application/yaml garbage", "application/yaml; charset=iso-8859-1", "application/yaml; profile=full"} {

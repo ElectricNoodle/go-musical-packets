@@ -96,6 +96,25 @@ func TestManagementBackendRedactsAndResolvesSecrets(t *testing.T) {
 	}
 }
 
+func TestManagementBackendValidationReturnsNonNilEmptyCollections(t *testing.T) {
+	configuration := managementTestConfig()
+	controller := mustController(t, configuration, newMemoryConfigRepository(configuration), nil)
+	var ready atomic.Bool
+	ready.Store(true)
+	backend := newTestManagementBackend(controller, &ready, context.Background())
+
+	validation, err := backend.ValidateConfig(context.Background(), configuration.Redacted())
+	if err != nil {
+		t.Fatalf("ValidateConfig() error = %v", err)
+	}
+	if validation.HotFields == nil || len(validation.HotFields) != 0 {
+		t.Fatalf("hot fields = %#v, want non-nil empty collection", validation.HotFields)
+	}
+	if validation.RestartRequiredFields == nil || len(validation.RestartRequiredFields) != 0 {
+		t.Fatalf("restart fields = %#v, want non-nil empty collection", validation.RestartRequiredFields)
+	}
+}
+
 func TestManagementBackendMapsUpdateFailuresAndRejectsWritesWhenUnavailable(t *testing.T) {
 	configuration := managementTestConfig()
 	repository := newMemoryConfigRepository(configuration)

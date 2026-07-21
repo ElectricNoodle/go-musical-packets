@@ -109,13 +109,19 @@ export function createManagementClient(fetcher: typeof fetch = fetch): Managemen
     getConfig: async (signal) => configDocument(await request('/api/v1/config', { signal })),
     getInterfaces: (signal) => json<InterfacesDocument>('/api/v1/interfaces', { signal }),
     getMIDI: (signal) => json<MIDIDevicesDocument>('/api/v1/midi/devices', { signal }),
-    validateConfig: (config, signal) =>
-      json<Validation>('/api/v1/config/validate', {
+    validateConfig: async (config, signal) => {
+      const validation = await json<Validation & { hot_fields: string[] | null; restart_required_fields: string[] | null }>('/api/v1/config/validate', {
         method: 'POST',
         headers: yamlHeaders,
         body: stringify(config),
         signal,
-      }),
+      })
+      return {
+        ...validation,
+        hot_fields: validation.hot_fields ?? [],
+        restart_required_fields: validation.restart_required_fields ?? [],
+      }
+    },
     updateConfig: async (config, revision, signal) =>
       configDocument(
         await request('/api/v1/config', {

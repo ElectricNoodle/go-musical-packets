@@ -50,6 +50,17 @@ describe('management client', () => {
     })
   })
 
+  it('normalizes nullable validation collections from older runtimes', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      revision: 'revision-a', hot_fields: null, restart_required_fields: null,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const client = createManagementClient(fetcher)
+
+    await expect(client.validateConfig(configuration)).resolves.toEqual({
+      revision: 'revision-a', hot_fields: [], restart_required_fields: [],
+    })
+  })
+
   it('loads bounded flows and sends complete overlay replacements', async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
