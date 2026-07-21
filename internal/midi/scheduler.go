@@ -52,6 +52,7 @@ type Scheduler struct {
 	recent                   []time.Time
 	nextGeneration           uint64
 	closed                   bool
+	coordination             *operationGate
 }
 
 type noteKey struct{ channel, note uint8 }
@@ -110,17 +111,25 @@ func NewScheduler(config SchedulerConfig) (*Scheduler, error) {
 		observer:                 config.Observer,
 		clock:                    config.clock,
 		active:                   make(map[noteKey]activeNote),
+		coordination:             newOperationGate(),
 	}, nil
 }
 
 // Write implements pipeline.Sink.
 func (s *Scheduler) Write(ctx context.Context, note music.NoteEvent) error {
+	if ctx == nil {
+		return errors.New("MIDI scheduler context is required")
+	}
 	if err := note.Validate(); err != nil {
 		return fmt.Errorf("schedule MIDI note: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := s.coordination.acquire(ctx); err != nil {
+		return err
+	}
+	defer s.coordination.release()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -172,6 +181,12 @@ func (s *Scheduler) Write(ctx context.Context, note music.NoteEvent) error {
 // Panic stops scheduled timers, sends All Notes Off on all channels, and keeps
 // the scheduler available for future notes.
 func (s *Scheduler) Panic() error {
+	_ = s.coordination.acquire(context.Background())
+	defer s.coordination.release()
+	return s.panicCoordinated()
+}
+
+func (s *Scheduler) panicCoordinated() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.panicLocked()
@@ -179,6 +194,12 @@ func (s *Scheduler) Panic() error {
 
 // Close performs a final panic and permanently rejects new notes.
 func (s *Scheduler) Close() error {
+	_ = s.coordination.acquire(context.Background())
+	defer s.coordination.release()
+	return s.closeCoordinated()
+}
+
+func (s *Scheduler) closeCoordinated() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -189,6 +210,8 @@ func (s *Scheduler) Close() error {
 }
 
 func (s *Scheduler) stop(key noteKey, generation uint64) {
+	_ = s.coordination.acquire(context.Background())
+	defer s.coordination.release()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	active, exists := s.active[key]
@@ -245,9 +268,20 @@ func (s *Scheduler) sendMessage(operation string, message []byte) error {
 	}
 	s.observer.Write(operation, result, time.Since(started))
 	if err != nil {
+		s.clearActiveLocked()
 		return fmt.Errorf("send MIDI %s: %w", operation, err)
 	}
 	return nil
+}
+
+func (s *Scheduler) clearActiveLocked() {
+	for _, active := range s.active {
+		active.timer.Stop()
+	}
+	s.active = make(map[noteKey]activeNote)
+	for channel := uint8(1); channel <= 16; channel++ {
+		s.observer.Active(channel, 0, 0)
+	}
 }
 
 func (s *Scheduler) pruneRateWindow(now time.Time) {

@@ -23,6 +23,12 @@ Global safety controls provide:
 Closing the scheduler stops every pending timer and permanently rejects new
 notes. Panic performs the same reset but leaves the scheduler reusable.
 
+The live runtime binds the scheduler and manager to one operation gate. A
+complete scheduler write or timer callback therefore cannot cross an automatic
+device transition, and panic/close cannot be crossed by a new packet-triggered
+note. A physical send failure disconnects the output and clears all remaining
+scheduled notes before the gate is released.
+
 ## Device recovery
 
 The manager performs discovery immediately and at the configured poll interval.
@@ -40,6 +46,12 @@ the preferred device without restarting capture or mapping. Cancellation closes
 the output before the driver. Runtime composition must close or panic the
 scheduler before canceling the manager so reset messages have a live port when
 possible.
+
+Every newly opened output receives All Notes Off on all 16 channels before it
+is published. When replacing or removing an existing output, the coordinated
+runtime first clears scheduler state and resets the old output, then commits the
+device transition. This keeps retrigger Note Off/Note On pairs and panic batches
+on one output and prevents stale notes surviving an unplug/replug cycle.
 
 Scheduler panic and close still attempt all 16 reset messages while disconnected,
 but an unavailable output is not itself a shutdown failure. Other reset and

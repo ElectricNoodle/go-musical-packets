@@ -228,16 +228,16 @@ func RunWithOptionsAndDependencies(
 		})
 	}
 
-	var scheduler *midi.Scheduler
+	var midiRuntime *midi.Runtime
 	var managerCancel context.CancelFunc
 	var managerDone chan error
 	if configuration.MIDI.Enabled {
-		midiRuntime, midiErr := newMIDIComponents(configuration, bundle, dependencies.NewMIDIDriver)
+		components, midiErr := newMIDIComponents(configuration, bundle, dependencies.NewMIDIDriver)
 		if midiErr != nil {
 			return midiErr
 		}
-		manager = midiRuntime.manager
-		scheduler = midiRuntime.scheduler
+		manager = components.manager
+		midiRuntime = components.runtime
 
 		managerContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
 		managerCancel = cancel
@@ -247,9 +247,9 @@ func RunWithOptionsAndDependencies(
 		select {
 		case <-manager.Ready():
 		case managerErr := <-managerDone:
-			return errors.Join(componentStopped("MIDI manager", managerErr), closeScheduler(scheduler))
+			return errors.Join(componentStopped("MIDI manager", managerErr), closeMIDIRuntime(midiRuntime))
 		case <-ctx.Done():
-			closeErr := closeScheduler(scheduler)
+			closeErr := closeMIDIRuntime(midiRuntime)
 			managerCancel()
 			managerErr := <-managerDone
 			return errors.Join(closeErr, normalizeComponentError(managerErr))
@@ -261,11 +261,11 @@ func RunWithOptionsAndDependencies(
 	if configuration.Capture.Enabled {
 		interfaces, interfacesErr := dependencies.Interfaces()
 		if interfacesErr != nil {
-			return shutdownStartup(fmt.Errorf("list capture interfaces: %w", interfacesErr), scheduler, managerCancel, managerDone)
+			return shutdownStartup(fmt.Errorf("list capture interfaces: %w", interfacesErr), midiRuntime, managerCancel, managerDone)
 		}
 		selected, selectErr := capture.SelectInterface(interfaces, configuration.Capture.Interface)
 		if selectErr != nil {
-			return shutdownStartup(fmt.Errorf("select capture interface: %w", selectErr), scheduler, managerCancel, managerDone)
+			return shutdownStartup(fmt.Errorf("select capture interface: %w", selectErr), midiRuntime, managerCancel, managerDone)
 		}
 		source, err = dependencies.OpenLive(capture.LiveConfig{
 			Device:         selected.Name,
@@ -275,17 +275,17 @@ func RunWithOptionsAndDependencies(
 			BPF:            captureBPF(configuration.Capture.BPF, httpPort),
 		})
 		if err != nil {
-			return shutdownStartup(fmt.Errorf("open live capture: %w", err), scheduler, managerCancel, managerDone)
+			return shutdownStartup(fmt.Errorf("open live capture: %w", err), midiRuntime, managerCancel, managerDone)
 		}
 
 		sink := pipeline.Sink(discardSink{})
-		if scheduler != nil {
-			sink = scheduler
+		if midiRuntime != nil {
+			sink = midiRuntime
 		}
 		processor, err = newProcessor(configuration, processing, source, sink, bundle.Pipeline)
 		if err != nil {
 			pipelineErr := errors.Join(err, source.Close())
-			return shutdownStartup(pipelineErr, scheduler, managerCancel, managerDone)
+			return shutdownStartup(pipelineErr, midiRuntime, managerCancel, managerDone)
 		}
 	}
 
@@ -308,7 +308,7 @@ func RunWithOptionsAndDependencies(
 	}
 	runtimeReady.Store(true)
 
-	return supervise(ctx, configuration.Server.WriteTimeout, server, serverDone, &runtimeReady, cancelManagement, processorCancel, processorDone, scheduler, managerCancel, managerDone)
+	return supervise(ctx, configuration.Server.WriteTimeout, server, serverDone, &runtimeReady, cancelManagement, processorCancel, processorDone, midiRuntime, managerCancel, managerDone)
 }
 
 type discardSink struct{}
@@ -386,8 +386,8 @@ func captureBPF(configured string, port uint16) string {
 	return fmt.Sprintf("(%s) and (%s)", configured, exclusion)
 }
 
-func shutdownStartup(startupErr error, scheduler *midi.Scheduler, managerCancel context.CancelFunc, managerDone <-chan error) error {
-	closeErr := closeScheduler(scheduler)
+func shutdownStartup(startupErr error, midiRuntime *midi.Runtime, managerCancel context.CancelFunc, managerDone <-chan error) error {
+	closeErr := closeMIDIRuntime(midiRuntime)
 	var managerErr error
 	if managerCancel != nil {
 		managerCancel()
@@ -405,7 +405,7 @@ func supervise(
 	cancelManagement context.CancelFunc,
 	processorCancel context.CancelFunc,
 	processorDone <-chan error,
-	scheduler *midi.Scheduler,
+	midiRuntime *midi.Runtime,
 	managerCancel context.CancelFunc,
 	managerDone <-chan error,
 ) error {
@@ -446,7 +446,7 @@ func supervise(
 	if !processorFinished {
 		result = errors.Join(result, normalizeComponentError(<-processorDone))
 	}
-	result = errors.Join(result, closeScheduler(scheduler))
+	result = errors.Join(result, closeMIDIRuntime(midiRuntime))
 	if managerCancel != nil {
 		managerCancel()
 	}
@@ -467,11 +467,11 @@ func supervise(
 	return result
 }
 
-func closeScheduler(scheduler *midi.Scheduler) error {
-	if scheduler == nil {
+func closeMIDIRuntime(midiRuntime *midi.Runtime) error {
+	if midiRuntime == nil {
 		return nil
 	}
-	return scheduler.Close()
+	return midiRuntime.Close()
 }
 
 func componentStopped(name string, err error) error {

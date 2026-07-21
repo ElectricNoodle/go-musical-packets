@@ -96,19 +96,73 @@ func TestManagerReadyAfterInitialUnavailableDiscovery(t *testing.T) {
 	}
 }
 
+func TestManagerSnapshotIsDetachedAndRetainsCacheAfterDiscoveryError(t *testing.T) {
+	driver := &fakeDriver{devices: []Device{{Number: 2, Name: "USB Synth"}}}
+	manager, err := NewManager(ManagerConfig{Driver: driver, PollInterval: time.Hour})
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	if err := manager.reconcile(); err != nil {
+		t.Fatalf("initial reconcile() error = %v", err)
+	}
+
+	snapshot := manager.Snapshot()
+	if !snapshot.DiscoveryOK || !snapshot.Connected || len(snapshot.Devices) != 1 {
+		t.Fatalf("initial Snapshot() = %#v", snapshot)
+	}
+	snapshot.Devices[0].Name = "mutated"
+	if got := manager.Snapshot().Devices[0].Name; got != "USB Synth" {
+		t.Fatalf("mutating snapshot changed manager device name to %q", got)
+	}
+
+	driver.mu.Lock()
+	driver.devicesErr = errors.New("discovery failed")
+	driver.mu.Unlock()
+	if err := manager.reconcile(); err == nil {
+		t.Fatal("reconcile() discovery error = nil")
+	}
+	stale := manager.Snapshot()
+	if stale.DiscoveryOK || !stale.Connected || len(stale.Devices) != 1 || stale.Devices[0].Name != "USB Synth" {
+		t.Fatalf("Snapshot() after discovery error = %#v, want connected stale cache", stale)
+	}
+}
+
+func TestManagerDoesNotPublishOutputThatFailsInitialReset(t *testing.T) {
+	resetErr := errors.New("reset failed")
+	driver := &fakeDriver{
+		devices:       []Device{{Number: 3, Name: "broken synth"}},
+		outputSendErr: resetErr,
+	}
+	manager, err := NewManager(ManagerConfig{Driver: driver, PollInterval: time.Hour})
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	if err := manager.reconcile(); !errors.Is(err, resetErr) {
+		t.Fatalf("reconcile() error = %v, want reset failure", err)
+	}
+	if _, connected := manager.Current(); connected {
+		t.Fatal("manager published output whose initial reset failed")
+	}
+	if driver.lastOutput == nil || !driver.lastOutput.closed {
+		t.Fatal("manager did not close output whose initial reset failed")
+	}
+}
+
 type fakeDriver struct {
-	mu         sync.Mutex
-	devices    []Device
-	openErr    error
-	openCount  int
-	lastOutput *fakeOutput
-	closed     bool
+	mu            sync.Mutex
+	devices       []Device
+	devicesErr    error
+	openErr       error
+	outputSendErr error
+	openCount     int
+	lastOutput    *fakeOutput
+	closed        bool
 }
 
 func (d *fakeDriver) Devices() ([]Device, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return append([]Device(nil), d.devices...), nil
+	return append([]Device(nil), d.devices...), d.devicesErr
 }
 
 func (d *fakeDriver) Open(int) (Output, error) {
@@ -118,7 +172,7 @@ func (d *fakeDriver) Open(int) (Output, error) {
 		return nil, d.openErr
 	}
 	d.openCount++
-	d.lastOutput = &fakeOutput{}
+	d.lastOutput = &fakeOutput{sendErr: d.outputSendErr}
 	return d.lastOutput, nil
 }
 

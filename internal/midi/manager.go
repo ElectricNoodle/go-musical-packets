@@ -12,6 +12,8 @@ import (
 
 var ErrOutputUnavailable = errors.New("MIDI output is unavailable")
 
+var ErrManagerStopped = errors.New("MIDI manager has stopped")
+
 // ManagerObserver receives device lifecycle events with bounded result values.
 type ManagerObserver interface {
 	DeviceState(state string)
@@ -31,6 +33,7 @@ type ManagerConfig struct {
 // Manager discovers, selects, and reconnects one preferred MIDI output. It is
 // safe to use as a Scheduler Sender while Run polls in another goroutine.
 type Manager struct {
+	reconcileMu       sync.Mutex
 	mu                sync.Mutex
 	driver            Driver
 	exactDeviceName   string
@@ -39,9 +42,23 @@ type Manager struct {
 	observer          ManagerObserver
 	output            Output
 	device            Device
+	devices           []Device
+	discoveryOK       bool
+	coordination      *operationGate
+	transition        func(Output, Device) error
 	running           atomic.Bool
+	stopped           atomic.Bool
 	ready             chan struct{}
 	readyOnce         sync.Once
+}
+
+// ManagerSnapshot is a detached view of the most recent device discovery and
+// selected output state.
+type ManagerSnapshot struct {
+	Devices     []Device
+	Current     Device
+	Connected   bool
+	DiscoveryOK bool
 }
 
 type noopManagerObserver struct{}
@@ -72,6 +89,7 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 		deviceNamePattern: config.DeviceNamePattern,
 		pollInterval:      config.PollInterval,
 		observer:          config.Observer,
+		coordination:      newOperationGate(),
 		ready:             make(chan struct{}),
 	}
 	manager.observer.DeviceState("disconnected")
@@ -91,17 +109,20 @@ func (m *Manager) Run(ctx context.Context) (runErr error) {
 		return errors.New("MIDI manager may only run once")
 	}
 	defer func() {
+		m.stopped.Store(true)
 		m.readyOnce.Do(func() { close(m.ready) })
-		m.mu.Lock()
-		m.disconnectLocked()
-		m.mu.Unlock()
+		m.reconcileMu.Lock()
+		defer m.reconcileMu.Unlock()
+		_ = m.coordination.acquire(context.Background())
+		m.replaceOutputCoordinated(nil, Device{})
+		m.coordination.release()
 		runErr = errors.Join(runErr, m.driver.Close())
 	}()
 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	m.reconcile()
+	_ = m.reconcile()
 	m.readyOnce.Do(func() { close(m.ready) })
 	ticker := time.NewTicker(m.pollInterval)
 	defer ticker.Stop()
@@ -110,7 +131,7 @@ func (m *Manager) Run(ctx context.Context) (runErr error) {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			m.reconcile()
+			_ = m.reconcile()
 		}
 	}
 }
@@ -138,29 +159,63 @@ func (m *Manager) Current() (Device, bool) {
 	return m.device, m.output != nil
 }
 
-func (m *Manager) reconcile() {
+// Snapshot returns the most recent discovered device list and connection
+// state. Its device slice may be mutated by the caller.
+func (m *Manager) Snapshot() ManagerSnapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	devices := append([]Device(nil), m.devices...)
+	if devices == nil {
+		devices = make([]Device, 0)
+	}
+	return ManagerSnapshot{
+		Devices:     devices,
+		Current:     m.device,
+		Connected:   m.output != nil,
+		DiscoveryOK: m.discoveryOK,
+	}
+}
+
+func (m *Manager) reconcile() error {
+	m.reconcileMu.Lock()
+	defer m.reconcileMu.Unlock()
+	if m.stopped.Load() {
+		return ErrManagerStopped
+	}
+	return m.reconcileLocked()
+}
+
+func (m *Manager) reconcileLocked() error {
 	devices, err := m.driver.Devices()
 	if err != nil {
+		m.mu.Lock()
+		m.discoveryOK = false
+		m.mu.Unlock()
 		m.observer.DeviceError("discover")
 		m.observer.Reconnect("discovery_error")
-		return
+		return fmt.Errorf("discover MIDI devices: %w", err)
 	}
+	m.mu.Lock()
+	m.devices = append(m.devices[:0], devices...)
+	m.discoveryOK = true
+	m.mu.Unlock()
 	selected, err := SelectDevice(devices, m.exactDeviceName, m.deviceNamePattern)
 	if err != nil {
-		m.mu.Lock()
-		m.disconnectLocked()
-		m.mu.Unlock()
+		var transitionErr error
+		if _, connected := m.Current(); connected {
+			transitionErr = m.commitTransition(nil, Device{})
+		}
 		if !errors.Is(err, ErrNoOutputDevices) {
 			m.observer.DeviceError("select")
 		}
 		m.observer.Reconnect("unavailable")
-		return
+		return errors.Join(err, transitionErr)
 	}
 
 	m.mu.Lock()
 	if m.output != nil && m.device == selected {
 		m.mu.Unlock()
-		return
+		return nil
 	}
 	m.mu.Unlock()
 
@@ -168,21 +223,65 @@ func (m *Manager) reconcile() {
 	if err != nil {
 		m.observer.DeviceError("open")
 		m.observer.Reconnect("open_error")
-		return
+		return fmt.Errorf("open MIDI output: %w", err)
 	}
-
-	m.mu.Lock()
-	previous := m.output
-	m.output = output
-	m.device = selected
-	m.mu.Unlock()
-	if previous != nil {
-		if err := previous.Close(); err != nil {
-			m.observer.DeviceError("close")
+	if err := resetOutput(output); err != nil {
+		m.observer.DeviceError("reset")
+		m.observer.Reconnect("reset_error")
+		return errors.Join(fmt.Errorf("reset MIDI output: %w", err), output.Close())
+	}
+	if err := m.commitTransition(output, selected); err != nil {
+		if _, connected := m.Current(); connected {
+			m.observer.DeviceState("connected")
 		}
+		m.observer.Reconnect("transition_error")
+		return err
 	}
 	m.observer.DeviceState("connected")
 	m.observer.Reconnect("success")
+	return nil
+}
+
+func (m *Manager) commitTransition(output Output, device Device) error {
+	if err := m.coordination.acquire(context.Background()); err != nil {
+		if output != nil {
+			_ = output.Close()
+		}
+		return err
+	}
+	defer m.coordination.release()
+	if m.transition != nil {
+		return m.transition(output, device)
+	}
+	return m.replaceOutputCoordinated(output, device)
+}
+
+func (m *Manager) replaceOutputCoordinated(output Output, device Device) error {
+	m.mu.Lock()
+	previous := m.output
+	m.output = output
+	m.device = device
+	m.mu.Unlock()
+	if previous == nil {
+		return nil
+	}
+	if err := previous.Close(); err != nil {
+		m.observer.DeviceError("close")
+	}
+	if output == nil {
+		m.observer.DeviceState("disconnected")
+	}
+	return nil
+}
+
+func resetOutput(output Output) error {
+	for channel := uint8(1); channel <= 16; channel++ {
+		message, _ := AllNotesOff(channel)
+		if err := output.Send(message); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Manager) disconnectLocked() {

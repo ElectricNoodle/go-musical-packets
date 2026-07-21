@@ -116,6 +116,34 @@ func TestSchedulerCloseWithoutOutputIsSuccessful(t *testing.T) {
 	}
 }
 
+func TestSchedulerSendFailureClearsAllActiveNotes(t *testing.T) {
+	clock := newManualClock(time.Unix(700, 0))
+	sender := &recordingSender{}
+	scheduler := testScheduler(t, sender, clock, 10, 4, 0)
+	for _, note := range []uint8{60, 61} {
+		if err := scheduler.Write(context.Background(), schedulerNote(1, note, time.Second)); err != nil {
+			t.Fatalf("Write(%d) error = %v", note, err)
+		}
+	}
+	sender.mu.Lock()
+	sender.err = errors.New("device lost")
+	sender.mu.Unlock()
+	if err := scheduler.Write(context.Background(), schedulerNote(1, 62, time.Second)); err == nil {
+		t.Fatal("Write() send failure = nil")
+	}
+	if got := len(scheduler.active); got != 0 {
+		t.Fatalf("active notes after send failure = %d, want 0", got)
+	}
+	sender.mu.Lock()
+	sender.err = nil
+	sender.mu.Unlock()
+	clock.Advance(time.Second)
+	assertMessages(t, sender.snapshot(),
+		[]byte{0x90, 60, 100},
+		[]byte{0x90, 61, 100},
+	)
+}
+
 func testScheduler(t *testing.T, sender Sender, clock schedulerClock, rate, polyphony int, retrigger time.Duration) *Scheduler {
 	t.Helper()
 	scheduler, err := NewScheduler(SchedulerConfig{

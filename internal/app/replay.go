@@ -85,17 +85,17 @@ func RunReplayWithDependencies(ctx context.Context, configuration config.Config,
 	sink := pipeline.Sink(discardSink{})
 
 	var manager *midi.Manager
-	var scheduler *midi.Scheduler
+	var midiRuntime *midi.Runtime
 	var managerCancel context.CancelFunc
 	var managerDone chan error
 	if configuration.MIDI.Enabled {
-		midiRuntime, midiErr := newMIDIComponents(configuration, bundle, dependencies.NewMIDIDriver)
+		midiComponents, midiErr := newMIDIComponents(configuration, bundle, dependencies.NewMIDIDriver)
 		if midiErr != nil {
 			return errors.Join(midiErr, source.Close())
 		}
-		manager = midiRuntime.manager
-		scheduler = midiRuntime.scheduler
-		sink = scheduler
+		manager = midiComponents.manager
+		midiRuntime = midiComponents.runtime
+		sink = midiRuntime
 
 		managerContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
 		managerCancel = cancel
@@ -105,20 +105,20 @@ func RunReplayWithDependencies(ctx context.Context, configuration config.Config,
 		select {
 		case <-manager.Ready():
 			if _, connected := manager.Current(); !connected {
-				return shutdownReplayStartup(midi.ErrOutputUnavailable, source, scheduler, managerCancel, managerDone)
+				return shutdownReplayStartup(midi.ErrOutputUnavailable, source, midiRuntime, managerCancel, managerDone)
 			}
 		case managerErr := <-managerDone:
-			return shutdownReplayStartup(componentStopped("MIDI manager", managerErr), source, scheduler, nil, nil)
+			return shutdownReplayStartup(componentStopped("MIDI manager", managerErr), source, midiRuntime, nil, nil)
 		case <-ctx.Done():
-			return shutdownReplayStartup(nil, source, scheduler, managerCancel, managerDone)
+			return shutdownReplayStartup(nil, source, midiRuntime, managerCancel, managerDone)
 		}
 	}
 
 	processor, err := newProcessor(configuration, components, source, sink, observer)
 	if err != nil {
-		return shutdownReplayStartup(err, source, scheduler, managerCancel, managerDone)
+		return shutdownReplayStartup(err, source, midiRuntime, managerCancel, managerDone)
 	}
-	return superviseReplay(ctx, processor, scheduler, managerCancel, managerDone)
+	return superviseReplay(ctx, processor, midiRuntime, managerCancel, managerDone)
 }
 
 // pacedReplaySource targets wallStart+(packetTimestamp-firstTimestamp). Using
@@ -179,12 +179,12 @@ func waitReplayDuration(ctx context.Context, duration time.Duration) error {
 func shutdownReplayStartup(
 	startupErr error,
 	source capture.Source,
-	scheduler *midi.Scheduler,
+	midiRuntime *midi.Runtime,
 	managerCancel context.CancelFunc,
 	managerDone <-chan error,
 ) error {
 	sourceErr := source.Close()
-	schedulerErr := closeScheduler(scheduler)
+	schedulerErr := closeMIDIRuntime(midiRuntime)
 	var managerErr error
 	if managerCancel != nil {
 		managerCancel()
@@ -198,7 +198,7 @@ func shutdownReplayStartup(
 func superviseReplay(
 	ctx context.Context,
 	processor *pipeline.Processor,
-	scheduler *midi.Scheduler,
+	midiRuntime *midi.Runtime,
 	managerCancel context.CancelFunc,
 	managerDone <-chan error,
 ) error {
@@ -236,7 +236,7 @@ func superviseReplay(
 	}
 	// The processor owns and has now closed the PCAP source. Keep shutdown
 	// sequential so the scheduler can reset notes while MIDI remains connected.
-	result = errors.Join(result, closeScheduler(scheduler))
+	result = errors.Join(result, closeMIDIRuntime(midiRuntime))
 	if managerCancel != nil {
 		managerCancel()
 	}

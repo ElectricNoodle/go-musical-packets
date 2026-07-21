@@ -86,8 +86,8 @@ func newProcessor(
 }
 
 type midiComponents struct {
-	manager   *midi.Manager
-	scheduler *midi.Scheduler
+	manager *midi.Manager
+	runtime *midi.Runtime
 }
 
 // newMIDIComponents transfers driver ownership to the returned manager. If
@@ -124,5 +124,9 @@ func newMIDIComponents(
 	if err != nil {
 		return midiComponents{}, errors.Join(fmt.Errorf("initialize MIDI scheduler: %w", err), driver.Close())
 	}
-	return midiComponents{manager: manager, scheduler: scheduler}, nil
+	runtime, err := midi.NewRuntime(manager, scheduler)
+	if err != nil {
+		return midiComponents{}, errors.Join(fmt.Errorf("initialize MIDI runtime: %w", err), driver.Close())
+	}
+	return midiComponents{manager: manager, runtime: runtime}, nil
 }
