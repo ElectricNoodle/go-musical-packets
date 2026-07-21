@@ -26,6 +26,11 @@ func (revision Revision) String() string {
 	return string(revision)
 }
 
+// RevisionOf returns the exact-byte revision for contents.
+func RevisionOf(contents []byte) Revision {
+	return digest(contents)
+}
+
 // Snapshot is a validated view of a configuration file at one revision.
 // Values returned by a repository retain private data needed to perform an
 // exact rollback; constructing a Snapshot directly does not confer that

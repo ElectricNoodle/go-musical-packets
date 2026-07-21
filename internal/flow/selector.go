@@ -133,10 +133,40 @@ func NewSelector(config SelectorConfig) (*Selector, error) {
 	return &Selector{
 		seed:          config.Seed,
 		defaultAction: config.Default,
-		safetyRules:   append([]Rule(nil), config.SafetyRules...),
-		pinnedRules:   append([]Rule(nil), config.PinnedRules...),
-		userRules:     append([]Rule(nil), config.UserRules...),
+		safetyRules:   cloneRules(config.SafetyRules),
+		pinnedRules:   cloneRules(config.PinnedRules),
+		userRules:     cloneRules(config.UserRules),
 	}, nil
+}
+
+func cloneRules(rules []Rule) []Rule {
+	if rules == nil {
+		return nil
+	}
+	cloned := make([]Rule, len(rules))
+	for index, rule := range rules {
+		cloned[index] = rule
+		cloned[index].Match = cloneMatch(rule.Match)
+	}
+	return cloned
+}
+
+func cloneMatch(match Match) Match {
+	cloned := match
+	cloned.SourcePrefix = cloneMatchValue(match.SourcePrefix)
+	cloned.DestinationPrefix = cloneMatchValue(match.DestinationPrefix)
+	cloned.SourcePorts = cloneMatchValue(match.SourcePorts)
+	cloned.DestinationPorts = cloneMatchValue(match.DestinationPorts)
+	cloned.WireSize = cloneMatchValue(match.WireSize)
+	return cloned
+}
+
+func cloneMatchValue[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 // Evaluate applies documented precedence to one packet.

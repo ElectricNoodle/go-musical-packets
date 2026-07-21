@@ -14,19 +14,22 @@ import (
 )
 
 type processingComponents struct {
-	registry *flow.Registry
-	selector *flow.Selector
-	mapper   *music.Mapper
+	registry   *flow.Registry
+	selector   pipeline.Selector
+	mapper     *music.Mapper
+	controller *Controller
 }
 
 // newProcessingComponents is shared by live capture and replay so both paths
-// interpret registry, ordered selector-rule, and mapping configuration alike.
-// Replay passes no safety rules because it opens no application listener whose
-// traffic could feed back into capture.
-func newProcessingComponents(configuration config.Config, safetyRules func([]flow.Rule) []flow.Rule) (processingComponents, error) {
-	userRules, err := configuration.FlowRules()
-	if err != nil {
-		return processingComponents{}, fmt.Errorf("build flow rules: %w", err)
+// interpret registry, selector-rule precedence, and mapping configuration
+// alike. A nil controller creates a read-only in-memory policy, as replay does.
+func newProcessingComponents(configuration config.Config, controller *Controller) (processingComponents, error) {
+	var err error
+	if controller == nil {
+		controller, err = newController(configuration, nil, nil)
+		if err != nil {
+			return processingComponents{}, fmt.Errorf("initialize runtime policy: %w", err)
+		}
 	}
 
 	registry, err := flow.NewRegistry(flow.RegistryConfig{
@@ -36,20 +39,6 @@ func newProcessingComponents(configuration config.Config, safetyRules func([]flo
 	})
 	if err != nil {
 		return processingComponents{}, fmt.Errorf("initialize flow registry: %w", err)
-	}
-
-	var configuredSafetyRules []flow.Rule
-	if safetyRules != nil {
-		configuredSafetyRules = safetyRules(userRules)
-	}
-	selector, err := flow.NewSelector(flow.SelectorConfig{
-		Seed:        configuration.Mapping.Seed,
-		Default:     flow.Action{State: flow.State(configuration.Mapping.DefaultState), Channel: configuration.Mapping.DefaultChannel},
-		SafetyRules: configuredSafetyRules,
-		UserRules:   userRules,
-	})
-	if err != nil {
-		return processingComponents{}, fmt.Errorf("initialize flow selector: %w", err)
 	}
 
 	mapper, err := music.NewMapper(music.MapperConfig{
@@ -64,7 +53,12 @@ func newProcessingComponents(configuration config.Config, safetyRules func([]flo
 		return processingComponents{}, fmt.Errorf("initialize music mapper: %w", err)
 	}
 
-	return processingComponents{registry: registry, selector: selector, mapper: mapper}, nil
+	return processingComponents{
+		registry:   registry,
+		selector:   controller.store,
+		mapper:     mapper,
+		controller: controller,
+	}, nil
 }
 
 func newProcessor(

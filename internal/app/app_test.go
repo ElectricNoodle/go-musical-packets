@@ -375,6 +375,135 @@ func TestRunAlreadyCanceledDoesNotOpenBoundaries(t *testing.T) {
 	}
 }
 
+func TestRunWithOptionsUsesRepositoryConfigurationAsAuthoritative(t *testing.T) {
+	supplied := testConfig()
+	supplied.Instance.Role = config.RoleHost
+	supplied.Peer.Enabled = true
+	supplied.Server.ListenAddress = "127.0.0.1:1"
+
+	persisted := testConfig()
+	persisted.Capture.Enabled = false
+	persisted.MIDI.Enabled = false
+	persisted.Server.ListenAddress = "127.0.0.1:43129"
+	repository := &startupConfigRepository{snapshot: config.Snapshot{
+		Config:   persisted,
+		Revision: revisionForTestConfig(t, persisted),
+	}}
+
+	const configPath = "/configs/musical-packets.yaml"
+	listenerReady := make(chan net.Listener, 1)
+	listenAddress := make(chan string, 1)
+	var nativeCalls atomic.Int32
+	dependencies := Dependencies{
+		OpenConfigRepository: func(path string) (ConfigRepository, error) {
+			if path != configPath {
+				t.Fatalf("OpenConfigRepository() path = %q, want %q", path, configPath)
+			}
+			return repository, nil
+		},
+		Interfaces: func() ([]capture.Interface, error) {
+			nativeCalls.Add(1)
+			return nil, errors.New("unexpected interface discovery")
+		},
+		OpenLive: func(capture.LiveConfig) (capture.Source, error) {
+			nativeCalls.Add(1)
+			return nil, errors.New("unexpected capture open")
+		},
+		NewMIDIDriver: func() (midi.Driver, error) {
+			nativeCalls.Add(1)
+			return nil, errors.New("unexpected MIDI initialization")
+		},
+		Listen: func(_, address string) (net.Listener, error) {
+			listenAddress <- address
+			listener := &trackingListener{Listener: newMemoryListener()}
+			listenerReady <- listener
+			return listener, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWithOptionsAndDependencies(ctx, supplied, RunOptions{ConfigPath: configPath}, dependencies)
+	}()
+	listener := awaitListener(t, listenerReady, done)
+	if got := <-listenAddress; got != persisted.Server.ListenAddress {
+		t.Fatalf("Listen() address = %q, want repository address %q", got, persisted.Server.ListenAddress)
+	}
+	eventuallyHTTP(t, listener, "/readyz", http.StatusOK, "ok\n")
+	cancel()
+	if err := await(t, done); err != nil {
+		t.Fatalf("RunWithOptionsAndDependencies() error = %v, want nil", err)
+	}
+	if got := repository.readCalls.Load(); got != 1 {
+		t.Fatalf("repository Read() calls = %d, want 1", got)
+	}
+	if got := nativeCalls.Load(); got != 0 {
+		t.Fatalf("disabled repository config made %d native calls, want 0", got)
+	}
+}
+
+func TestRunWithOptionsConfigRepositoryFailuresPrecedeNativeBoundaries(t *testing.T) {
+	openErr := errors.New("repository unavailable")
+	readErr := errors.New("configuration read failed")
+	tests := []struct {
+		name string
+		open func(string) (ConfigRepository, error)
+		want error
+	}{
+		{
+			name: "constructor",
+			open: func(string) (ConfigRepository, error) { return nil, openErr },
+			want: openErr,
+		},
+		{
+			name: "read",
+			open: func(string) (ConfigRepository, error) {
+				return &startupConfigRepository{readErr: readErr}, nil
+			},
+			want: readErr,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var nativeCalls atomic.Int32
+			called := func() { nativeCalls.Add(1) }
+			dependencies := Dependencies{
+				OpenConfigRepository: test.open,
+				Interfaces: func() ([]capture.Interface, error) {
+					called()
+					return nil, nil
+				},
+				OpenLive: func(capture.LiveConfig) (capture.Source, error) {
+					called()
+					return nil, nil
+				},
+				NewMIDIDriver: func() (midi.Driver, error) {
+					called()
+					return nil, nil
+				},
+				Listen: func(string, string) (net.Listener, error) {
+					called()
+					return nil, nil
+				},
+			}
+
+			err := RunWithOptionsAndDependencies(
+				context.Background(),
+				testConfig(),
+				RunOptions{ConfigPath: "/configs/musical-packets.yaml"},
+				dependencies,
+			)
+			if !errors.Is(err, test.want) {
+				t.Fatalf("RunWithOptionsAndDependencies() error = %v, want %v", err, test.want)
+			}
+			if got := nativeCalls.Load(); got != 0 {
+				t.Fatalf("native boundary calls = %d, want 0", got)
+			}
+		})
+	}
+}
+
 func TestNormalizeComponentErrorPreservesCleanupFailure(t *testing.T) {
 	cleanupErr := errors.New("close failed")
 	err := normalizeComponentError(fmt.Errorf("wrapped: %w", errors.Join(context.Canceled, cleanupErr)))
@@ -384,6 +513,40 @@ func TestNormalizeComponentErrorPreservesCleanupFailure(t *testing.T) {
 	if errors.Is(err, context.Canceled) {
 		t.Fatalf("normalizeComponentError() = %v, want cancellation removed", err)
 	}
+}
+
+func revisionForTestConfig(t *testing.T, configuration config.Config) config.Revision {
+	t.Helper()
+	contents, err := config.Encode(configuration)
+	if err != nil {
+		t.Fatalf("config.Encode() error = %v", err)
+	}
+	return config.RevisionOf(contents)
+}
+
+type startupConfigRepository struct {
+	snapshot  config.Snapshot
+	readErr   error
+	readCalls atomic.Int32
+}
+
+func (repository *startupConfigRepository) Read() (config.Snapshot, error) {
+	repository.readCalls.Add(1)
+	if repository.readErr != nil {
+		return config.Snapshot{}, repository.readErr
+	}
+	return config.Snapshot{
+		Config:   repository.snapshot.Config.Clone(),
+		Revision: repository.snapshot.Revision,
+	}, nil
+}
+
+func (*startupConfigRepository) Replace(config.Revision, config.Config) (config.Change, error) {
+	return config.Change{}, errors.New("unexpected repository replacement")
+}
+
+func (*startupConfigRepository) Rollback(config.Change) (config.Change, error) {
+	return config.Change{}, errors.New("unexpected repository rollback")
 }
 
 func testInterfaces() ([]capture.Interface, error) {

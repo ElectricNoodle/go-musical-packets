@@ -123,7 +123,7 @@ func runStandalone(ctx context.Context, args []string, stdout, stderr io.Writer)
 		"instance", configuration.Instance.ID,
 		"listen_address", configuration.Server.ListenAddress,
 	)
-	if err := app.Run(ctx, configuration); err != nil {
+	if err := app.RunWithOptions(ctx, configuration, app.RunOptions{ConfigPath: path}); err != nil {
 		logger.Error("standalone service stopped", "error", err)
 		return 1
 	}

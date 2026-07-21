@@ -33,14 +33,22 @@ var errMIDIDisabled = errors.New("MIDI output is disabled")
 // Dependencies contains operating-system boundaries that tests and embedding
 // programs may replace. Zero fields use the production implementations.
 type Dependencies struct {
-	Interfaces     func() ([]capture.Interface, error)
-	OpenLive       func(capture.LiveConfig) (capture.Source, error)
-	OpenReplayFile func(path string) (capture.Source, error)
-	NewMIDIDriver  func() (midi.Driver, error)
-	Listen         func(network, address string) (net.Listener, error)
-	ReplayNow      func() time.Time
-	ReplayWait     func(context.Context, time.Duration) error
-	ReplayObserver pipeline.Observer
+	Interfaces           func() ([]capture.Interface, error)
+	OpenLive             func(capture.LiveConfig) (capture.Source, error)
+	OpenReplayFile       func(path string) (capture.Source, error)
+	OpenConfigRepository func(path string) (ConfigRepository, error)
+	NewMIDIDriver        func() (midi.Driver, error)
+	Listen               func(network, address string) (net.Listener, error)
+	ReplayNow            func() time.Time
+	ReplayWait           func(context.Context, time.Duration) error
+	ReplayObserver       pipeline.Observer
+}
+
+// RunOptions selects optional standalone-runtime capabilities. Supplying a
+// config path makes that repository authoritative and enables persisted hot
+// configuration updates. The zero value retains the legacy read-only runtime.
+type RunOptions struct {
+	ConfigPath string
 }
 
 func (dependencies Dependencies) withDefaults() Dependencies {
@@ -52,6 +60,11 @@ func (dependencies Dependencies) withDefaults() Dependencies {
 	}
 	if dependencies.OpenReplayFile == nil {
 		dependencies.OpenReplayFile = capture.OpenReplayFile
+	}
+	if dependencies.OpenConfigRepository == nil {
+		dependencies.OpenConfigRepository = func(path string) (ConfigRepository, error) {
+			return config.NewFileRepository(path)
+		}
 	}
 	if dependencies.NewMIDIDriver == nil {
 		dependencies.NewMIDIDriver = midi.NewDriver
@@ -71,19 +84,53 @@ func (dependencies Dependencies) withDefaults() Dependencies {
 // Run validates and runs a standalone node until cancellation or a terminal
 // component result. Context cancellation is a normal, successful shutdown.
 func Run(ctx context.Context, configuration config.Config) error {
-	return RunWithDependencies(ctx, configuration, Dependencies{})
+	return RunWithOptionsAndDependencies(ctx, configuration, RunOptions{}, Dependencies{})
+}
+
+// RunWithOptions is Run with optional persisted runtime-policy support.
+func RunWithOptions(ctx context.Context, configuration config.Config, options RunOptions) error {
+	return RunWithOptionsAndDependencies(ctx, configuration, options, Dependencies{})
 }
 
 // RunWithDependencies is Run with injectable capture, MIDI, and listener
 // boundaries. It is intended for application-level integration tests and
 // callers that embed the runtime.
 func RunWithDependencies(ctx context.Context, configuration config.Config, dependencies Dependencies) (runErr error) {
+	return RunWithOptionsAndDependencies(ctx, configuration, RunOptions{}, dependencies)
+}
+
+// RunWithOptionsAndDependencies combines optional persisted runtime-policy
+// support with injectable operating-system boundaries.
+func RunWithOptionsAndDependencies(
+	ctx context.Context,
+	configuration config.Config,
+	options RunOptions,
+	dependencies Dependencies,
+) (runErr error) {
 	if ctx == nil {
 		return errors.New("application context is required")
 	}
-	if err := configuration.Validate(); err != nil {
+	dependencies = dependencies.withDefaults()
+
+	var repository ConfigRepository
+	if options.ConfigPath != "" {
+		var err error
+		repository, err = dependencies.OpenConfigRepository(options.ConfigPath)
+		if err != nil {
+			return fmt.Errorf("open config repository %q: %w", options.ConfigPath, err)
+		}
+		if repository == nil {
+			return fmt.Errorf("open config repository %q: repository is unavailable", options.ConfigPath)
+		}
+	} else if err := configuration.Validate(); err != nil {
 		return fmt.Errorf("validate configuration: %w", err)
 	}
+
+	controller, err := newController(configuration, repository, nil)
+	if err != nil {
+		return fmt.Errorf("initialize runtime policy: %w", err)
+	}
+	configuration = controller.Current().Config
 	if configuration.Instance.Role != config.RoleStandalone {
 		return fmt.Errorf("run standalone: instance role %q is unsupported", configuration.Instance.Role)
 	}
@@ -93,7 +140,6 @@ func RunWithDependencies(ctx context.Context, configuration config.Config, depen
 	if err := ctx.Err(); err != nil {
 		return nil
 	}
-	dependencies = dependencies.withDefaults()
 
 	bundle, err := metrics.New(configuration.Metrics.Namespace)
 	if err != nil {
@@ -135,14 +181,16 @@ func RunWithDependencies(ctx context.Context, configuration config.Config, depen
 	if err != nil {
 		return fmt.Errorf("resolve HTTP listener port: %w", err)
 	}
-	var processing processingComponents
 	if configuration.Capture.Enabled {
-		processing, err = newProcessingComponents(configuration, func(userRules []flow.Rule) []flow.Rule {
+		if err := controller.configureSafety(func(userRules []flow.Rule) []flow.Rule {
 			return httpSafetyRules(httpPort, userRules)
-		})
-		if err != nil {
-			return err
+		}); err != nil {
+			return fmt.Errorf("configure capture safety policy: %w", err)
 		}
+	}
+	processing, err := newProcessingComponents(configuration, controller)
+	if err != nil {
+		return err
 	}
 
 	var scheduler *midi.Scheduler
