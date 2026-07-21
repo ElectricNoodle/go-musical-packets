@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,6 +106,61 @@ func TestDecodeRejectsNonStrictOrInvalidInput(t *testing.T) {
 func TestDecodeRejectsNilReader(t *testing.T) {
 	if _, err := Decode(nil); err == nil || !strings.Contains(err.Error(), "reader is nil") {
 		t.Fatalf("Decode(nil) error = %v", err)
+	}
+}
+
+func TestEncodeReturnsValidatedDeterministicFullYAML(t *testing.T) {
+	configuration := Default()
+	configuration.Instance.ID = "encoded"
+	configuration.Rules = RulesConfig{
+		{ID: "first", Name: "First", Enabled: true, Action: RuleActionConfig{State: FlowPlay, Channel: 1}},
+		{ID: "second", Name: "Second", Enabled: true, Action: RuleActionConfig{State: FlowMonitor, Channel: 2}},
+	}
+
+	first, err := Encode(configuration)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	second, err := Encode(configuration)
+	if err != nil {
+		t.Fatalf("second Encode() error = %v", err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("Encode() is not deterministic:\n%s\n%s", first, second)
+	}
+	if !bytes.HasSuffix(first, []byte("\n")) || bytes.Contains(first, []byte("---")) {
+		t.Fatalf("Encode() output must be exactly one document with a trailing newline:\n%s", first)
+	}
+	if !bytes.Contains(first, []byte("instance:\n  id: encoded\n  role: standalone\n")) {
+		t.Fatalf("Encode() output does not use the canonical two-space indentation:\n%s", first)
+	}
+	for _, duration := range []string{"minimum_duration: 50ms", "maximum_duration: 2s", "flow_ttl: 5m0s"} {
+		if !bytes.Contains(first, []byte(duration)) {
+			t.Errorf("Encode() output does not contain human-readable %q", duration)
+		}
+	}
+	firstRule := bytes.Index(first, []byte("id: first"))
+	secondRule := bytes.Index(first, []byte("id: second"))
+	if firstRule < 0 || secondRule < 0 || firstRule >= secondRule {
+		t.Fatalf("Encode() changed configured rule order:\n%s", first)
+	}
+	for _, field := range []string{"instance:", "capture:", "mapping:", "performance:", "midi:", "server:", "peer:", "metrics:", "logging:", "rules:"} {
+		if !bytes.Contains(first, []byte(field)) {
+			t.Errorf("Encode() output does not contain %q", field)
+		}
+	}
+	decoded, err := Decode(bytes.NewReader(first))
+	if err != nil {
+		t.Fatalf("Decode(Encode()) error = %v", err)
+	}
+	if decoded.Instance.ID != configuration.Instance.ID || decoded.Mapping != configuration.Mapping {
+		t.Fatalf("Decode(Encode()) = %#v, want encoded configuration", decoded)
+	}
+
+	invalid := configuration
+	invalid.Instance.ID = ""
+	if _, err := Encode(invalid); err == nil || !strings.Contains(err.Error(), "instance.id") {
+		t.Fatalf("Encode(invalid) error = %v, want validation error", err)
 	}
 }
 

@@ -43,6 +43,35 @@ type Config struct {
 	Rules       RulesConfig       `json:"rules" yaml:"rules"`
 }
 
+// Clone returns a deep copy that can be mutated independently.
+func (config Config) Clone() Config {
+	clone := config
+	if config.Rules == nil {
+		return clone
+	}
+
+	clone.Rules = make(RulesConfig, len(config.Rules))
+	for index, rule := range config.Rules {
+		clone.Rules[index] = rule
+		clone.Rules[index].Match.SourcePorts = cloneValue(rule.Match.SourcePorts)
+		clone.Rules[index].Match.DestinationPorts = cloneValue(rule.Match.DestinationPorts)
+		clone.Rules[index].Match.WireSize = cloneValue(rule.Match.WireSize)
+		if rule.Match.RequiredTCPFlags != nil {
+			clone.Rules[index].Match.RequiredTCPFlags = make([]TCPFlag, len(rule.Match.RequiredTCPFlags))
+			copy(clone.Rules[index].Match.RequiredTCPFlags, rule.Match.RequiredTCPFlags)
+		}
+	}
+	return clone
+}
+
+func cloneValue[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
+}
+
 type InstanceConfig struct {
 	ID   string `json:"id" yaml:"id"`
 	Role Role   `json:"role" yaml:"role"`

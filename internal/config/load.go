@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -49,4 +50,24 @@ func Decode(reader io.Reader) (Config, error) {
 		return Config{}, fmt.Errorf("validate config: %w", err)
 	}
 	return config, nil
+}
+
+// Encode validates configuration and returns its canonical full YAML
+// representation. Unlike Decode, which accepts a partial document overlaid on
+// defaults, Encode emits every top-level configuration field.
+func Encode(config Config) ([]byte, error) {
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("validate config: %w", err)
+	}
+
+	var output bytes.Buffer
+	encoder := yaml.NewEncoder(&output)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(config); err != nil {
+		return nil, fmt.Errorf("encode config: %w", err)
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, fmt.Errorf("close config encoder: %w", err)
+	}
+	return output.Bytes(), nil
 }
