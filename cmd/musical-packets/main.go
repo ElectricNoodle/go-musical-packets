@@ -113,17 +113,26 @@ func runStandalone(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if code >= 0 {
 		return code
 	}
-	configuration, err := config.Load(path)
+	repository, err := config.NewFileRepository(path)
 	if err != nil {
 		fmt.Fprintf(stderr, "load configuration: %v\n", err)
 		return 1
 	}
+	snapshot, err := repository.Read()
+	if err != nil {
+		fmt.Fprintf(stderr, "load configuration: %v\n", err)
+		return 1
+	}
+	configuration := snapshot.Config
 	logger := applicationLogger(configuration.Logging, stderr)
 	logger.Info("starting standalone service",
 		"instance", configuration.Instance.ID,
 		"listen_address", configuration.Server.ListenAddress,
 	)
-	if err := app.RunWithOptions(ctx, configuration, app.RunOptions{ConfigPath: path}); err != nil {
+	if err := app.RunWithOptions(ctx, configuration, app.RunOptions{
+		ConfigPath:       path,
+		ExpectedRevision: snapshot.Revision,
+	}); err != nil {
 		logger.Error("standalone service stopped", "error", err)
 		return 1
 	}

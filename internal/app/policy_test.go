@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -250,6 +251,38 @@ func TestControllerRejectsReadOnlyStaleAndPersistenceFailureWithoutMutation(t *t
 		t.Fatalf("Update(persist failure) error = %v, want %v", err, persistErr)
 	}
 	assertDocumentUnchanged(t, controller.Current(), current)
+}
+
+func TestControllerChecksExpectedRevisionBeforeCandidateClassification(t *testing.T) {
+	configuration := testConfig()
+	controller := mustController(t, configuration, newMemoryConfigRepository(configuration), nil)
+	candidate := configuration.Clone()
+	candidate.Server.ListenAddress = "127.0.0.1:9999"
+
+	_, err := controller.Update("stale", candidate)
+	var conflict *config.ConflictError
+	var restart *RestartRequiredError
+	if !errors.As(err, &conflict) || errors.As(err, &restart) {
+		t.Fatalf("Update(stale restart candidate) error = %v, want only revision conflict", err)
+	}
+}
+
+func TestControllerUpdateContextHonorsPreCanceledRequest(t *testing.T) {
+	configuration := testConfig()
+	repository := newMemoryConfigRepository(configuration)
+	controller := mustController(t, configuration, repository, nil)
+	candidate := configuration.Clone()
+	candidate.Mapping.DefaultState = config.FlowPlay
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := controller.UpdateContext(ctx, controller.Current().Revision, candidate)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("UpdateContext() error = %v, want context.Canceled", err)
+	}
+	if repository.snapshot.Config.Mapping.DefaultState != configuration.Mapping.DefaultState {
+		t.Fatal("UpdateContext() persisted a canceled candidate")
+	}
 }
 
 func TestControllerHotUpdateAndNoOpPreserveOverlay(t *testing.T) {

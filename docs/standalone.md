@@ -12,9 +12,15 @@ unknown fields, duplicate keys, additional YAML documents, and invalid values
 are rejected before native capture or MIDI resources are opened.
 
 ```sh
-musical-packets validate-config --config config.example.yaml
-musical-packets run --config config.example.yaml
+cp config.example.yaml config.local.yaml
+chmod 600 config.local.yaml
+musical-packets validate-config --config config.local.yaml
+musical-packets run --config config.local.yaml
 ```
+
+The local copy is ignored by Git. Owner-only permissions are required before a
+content-changing management write can atomically replace a config containing
+write-only secrets.
 
 The default selector state is `monitor`, so observed packets do not produce
 notes until a rule or the default action explicitly selects `play`. Rules retain
@@ -30,11 +36,22 @@ The configured management listener exposes:
 GET /metrics
 GET /healthz
 GET /readyz
+GET /api/v1/status
+GET /api/v1/config
+POST /api/v1/config/validate
+PUT /api/v1/config
 ```
 
+The `/api/v1` routes are mounted only on an actually loopback-bound listener;
+metrics and probes remain available on a configured non-loopback listener.
+Configuration writes use strong revision preconditions and atomic persistence.
+See [management-api.md](management-api.md) for the request, security, redaction,
+and failure contracts.
+
 Health remains successful while the process can recover from a temporarily
-missing MIDI device. Readiness is unavailable during startup and shutdown, and
-while MIDI is enabled but disconnected. Disabling MIDI makes it an optional
+missing MIDI device. Readiness is unavailable during startup and shutdown,
+while MIDI is enabled but disconnected, or while durable and active runtime
+configuration are not known to agree. Disabling MIDI makes it an optional
 dependency; any selected notes are then rejected by an observable sink rather
 than reported as played.
 

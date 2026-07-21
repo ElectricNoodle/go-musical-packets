@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -46,7 +49,7 @@ func TestFileRepositoryReadUsesExactByteRevision(t *testing.T) {
 }
 
 func TestFileRepositoryReplaceWritesCanonicalFullYAMLAndPreservesMode(t *testing.T) {
-	path := writeRepositoryConfig(t, "instance:\n  id: before\n", 0o640)
+	path := writeRepositoryConfig(t, "instance:\n  id: before\n", 0o600)
 	repository := newTestFileRepository(t, path)
 	before := mustReadRepository(t, repository)
 	next := before.Config
@@ -89,12 +92,34 @@ func TestFileRepositoryReplaceWritesCanonicalFullYAMLAndPreservesMode(t *testing
 	if err != nil {
 		t.Fatalf("Stat() error = %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o640 {
-		t.Fatalf("persisted mode = %o, want 640", got)
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("persisted mode = %o, want 600", got)
 	}
 	if change.After.Revision != digest(contents) {
 		t.Fatalf("After.Revision = %q, want digest of persisted bytes", change.After.Revision)
 	}
+}
+
+func TestFileRepositoryReplaceRejectsGroupOrOtherAccessibleMode(t *testing.T) {
+	original := []byte("instance:\n  id: before\n")
+	path := writeRepositoryConfig(t, string(original), 0o640)
+	repository := newTestFileRepository(t, path)
+	before := mustReadRepository(t, repository)
+	next := before.Config
+	next.Instance.ID = "after"
+
+	_, err := repository.Replace(before.Revision, next)
+	if err == nil || !strings.Contains(err.Error(), "requires owner-only permissions") {
+		t.Fatalf("Replace() error = %v, want owner-only mode rejection", err)
+	}
+	contents, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("ReadFile() error = %v", readErr)
+	}
+	if !bytes.Equal(contents, original) {
+		t.Fatalf("rejected replacement contents = %q, want %q", contents, original)
+	}
+	assertNoRepositoryTemps(t, path)
 }
 
 func TestFileRepositoryReplaceNoOpPreservesOriginalBytes(t *testing.T) {
@@ -335,7 +360,7 @@ func TestFileRepositoryReplaceFailuresBeforeRenameLeaveOriginal(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			original := []byte("instance:\n  id: original\n")
-			path := writeRepositoryConfig(t, string(original), 0o640)
+			path := writeRepositoryConfig(t, string(original), 0o600)
 			repository := newTestFileRepository(t, path)
 			snapshot := mustReadRepository(t, repository)
 			next := snapshot.Config
@@ -537,6 +562,127 @@ func TestFileRepositorySerializesRepositoriesWithCanonicalLockPath(t *testing.T)
 	}
 }
 
+func TestFileRepositoryReplaceContextCancelsWhileAdvisoryLockIsHeld(t *testing.T) {
+	path := writeRepositoryConfig(t, "instance:\n  id: before\n", 0o600)
+	repository := newTestFileRepository(t, path)
+	snapshot := mustReadRepository(t, repository)
+	next := snapshot.Config
+	next.Instance.ID = "after"
+
+	held, err := repository.ops.openLock(repository.lockPath)
+	if err != nil {
+		t.Fatalf("open held lock: %v", err)
+	}
+	if err := repository.ops.flock(held, unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		_ = repository.ops.close(held)
+		t.Fatalf("hold advisory lock: %v", err)
+	}
+	defer func() {
+		_ = repository.ops.flock(held, unix.LOCK_UN)
+		_ = repository.ops.close(held)
+	}()
+
+	originalFlock := repository.ops.flock
+	attempted := make(chan struct{})
+	var attemptedOnce sync.Once
+	repository.ops.flock = func(file *os.File, operation int) error {
+		if file != held && operation&unix.LOCK_EX != 0 {
+			attemptedOnce.Do(func() { close(attempted) })
+		}
+		return originalFlock(file, operation)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, replaceErr := repository.ReplaceContext(ctx, snapshot.Revision, next)
+		done <- replaceErr
+	}()
+	select {
+	case <-attempted:
+	case <-time.After(time.Second):
+		t.Fatal("ReplaceContext() did not attempt the advisory lock")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ReplaceContext() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ReplaceContext() did not stop after cancellation")
+	}
+
+	current := mustReadRepository(t, repository)
+	if current.Revision != snapshot.Revision || current.Config.Instance.ID != "before" {
+		t.Fatalf("canceled replacement changed config: %#v", current)
+	}
+	assertNoRepositoryTemps(t, path)
+}
+
+func TestFileRepositoryReplaceContextCancellationBeforeRenameLeavesOriginal(t *testing.T) {
+	path := writeRepositoryConfig(t, "instance:\n  id: before\n", 0o600)
+	repository := newTestFileRepository(t, path)
+	snapshot := mustReadRepository(t, repository)
+	next := snapshot.Config
+	next.Instance.ID = "after"
+	ctx, cancel := context.WithCancel(context.Background())
+
+	originalClose := repository.ops.close
+	repository.ops.close = func(file *os.File) error {
+		err := originalClose(file)
+		if strings.Contains(filepath.Base(file.Name()), ".tmp-") {
+			cancel()
+		}
+		return err
+	}
+	if _, err := repository.ReplaceContext(ctx, snapshot.Revision, next); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReplaceContext() error = %v, want context.Canceled", err)
+	}
+	current := mustReadRepository(t, repository)
+	if current.Revision != snapshot.Revision || current.Config.Instance.ID != "before" {
+		t.Fatalf("canceled replacement changed config: %#v", current)
+	}
+	assertNoRepositoryTemps(t, path)
+}
+
+func TestFileRepositoryReplaceContextRechecksCancellationImmediatelyBeforeRename(t *testing.T) {
+	path := writeRepositoryConfig(t, "instance:\n  id: before\n", 0o600)
+	repository := newTestFileRepository(t, path)
+	snapshot := mustReadRepository(t, repository)
+	next := snapshot.Config
+	next.Instance.ID = "after"
+	ctx, cancel := context.WithCancel(context.Background())
+
+	originalLstat := repository.ops.lstat
+	reads := 0
+	repository.ops.lstat = func(path string) (fs.FileInfo, error) {
+		reads++
+		info, err := originalLstat(path)
+		if reads == 2 {
+			cancel()
+		}
+		return info, err
+	}
+	renamed := false
+	originalRename := repository.ops.rename
+	repository.ops.rename = func(before, after string) error {
+		renamed = true
+		return originalRename(before, after)
+	}
+	if _, err := repository.ReplaceContext(ctx, snapshot.Revision, next); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReplaceContext() error = %v, want context.Canceled", err)
+	}
+	if renamed {
+		t.Fatal("ReplaceContext() renamed after cancellation")
+	}
+	current := mustReadRepository(t, repository)
+	if current.Revision != snapshot.Revision || current.Config.Instance.ID != "before" {
+		t.Fatalf("canceled replacement changed config: %#v", current)
+	}
+	assertNoRepositoryTemps(t, path)
+}
+
 func TestFileRepositoryReadDoesNotRequireAdvisoryLock(t *testing.T) {
 	path := writeRepositoryConfig(t, "instance:\n  id: readable\n", 0o600)
 	repository := newTestFileRepository(t, path)
@@ -651,7 +797,7 @@ func TestFileRepositoryRollbackRejectsModeOnlyChangeAfterCommit(t *testing.T) {
 
 func TestFileRepositoryBoundsReadsAndReplacements(t *testing.T) {
 	t.Run("read overflow", func(t *testing.T) {
-		contents := "#" + strings.Repeat("x", maximumConfigBytes) + "\n"
+		contents := "#" + strings.Repeat("x", MaximumBytes) + "\n"
 		path := writeRepositoryConfig(t, contents, 0o600)
 		repository := newTestFileRepository(t, path)
 		if _, err := repository.Read(); err == nil || !strings.Contains(err.Error(), "maximum is 1048576 bytes") {
@@ -665,7 +811,7 @@ func TestFileRepositoryBoundsReadsAndReplacements(t *testing.T) {
 		repository := newTestFileRepository(t, path)
 		snapshot := mustReadRepository(t, repository)
 		next := snapshot.Config
-		next.Instance.ID = strings.Repeat("x", maximumConfigBytes)
+		next.Instance.ID = strings.Repeat("x", MaximumBytes)
 		createdTemp := false
 		repository.ops.createTemp = func(string, string) (*os.File, error) {
 			createdTemp = true
@@ -737,7 +883,7 @@ func TestFileRepositoryNoOpChangeSnapshotsDoNotAlias(t *testing.T) {
 
 func TestFileRepositoryRollbackRestoresExactBytesAndMode(t *testing.T) {
 	original := []byte("# preserve me\ninstance: {id: before}\n")
-	path := writeRepositoryConfig(t, string(original), 0o604)
+	path := writeRepositoryConfig(t, string(original), 0o600)
 	repository := newTestFileRepository(t, path)
 	before := mustReadRepository(t, repository)
 	next := before.Config
@@ -773,8 +919,8 @@ func TestFileRepositoryRollbackRestoresExactBytesAndMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat() error = %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o604 {
-		t.Fatalf("rollback mode = %o, want 604", got)
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("rollback mode = %o, want 600", got)
 	}
 
 	// A rollback itself is a committed change and can be rolled back safely.

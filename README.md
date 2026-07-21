@@ -8,12 +8,10 @@ The accepted architecture and delivery plan is in [docs/PLAN.md](docs/PLAN.md).
 
 ## Development status
 
-Delivery stages 1 through 9 are implemented: configuration and lifecycle
-foundations, native capture/MIDI feasibility adapters, deterministic musical
-mapping, bounded flow selection, PCAP replay, and the instrumented live
-processing pipeline, safe MIDI scheduling and hot-plug recovery, plus the
-strictly configured standalone runtime. The transactional management API is the
-next stage.
+Delivery stages 1 through 9 are implemented. Stage 10 is underway: the
+transactional configuration core and local status/config management endpoints
+are implemented, including optimistic revisions, atomic runtime policy swaps,
+and rollback. Flow, rule, and MIDI management surfaces are next.
 
 ## Commands
 
@@ -25,10 +23,15 @@ make build
 ./bin/musical-packets version
 ./bin/musical-packets interfaces
 ./bin/musical-packets devices
-./bin/musical-packets validate-config --config config.example.yaml
-./bin/musical-packets run --config config.example.yaml
+cp config.example.yaml config.local.yaml
+chmod 600 config.local.yaml
+./bin/musical-packets validate-config --config config.local.yaml
+./bin/musical-packets run --config config.local.yaml
 ./bin/musical-packets replay recording.pcap --config config.replay.example.yaml
 ```
+
+The owner-only mode on the local config is required for transactional runtime
+writes; `*.local.yaml` is ignored by Git.
 
 Native capture and MIDI prerequisites are documented in
 [docs/platform-spike.md](docs/platform-spike.md).
@@ -40,3 +43,5 @@ PCAP replay configuration, pacing, and completion behavior are documented in
 [docs/replay.md](docs/replay.md).
 Standalone configuration, probes, exclusions, and shutdown are documented in
 [docs/standalone.md](docs/standalone.md).
+The local transactional HTTP contract is documented in
+[docs/management-api.md](docs/management-api.md).

@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -12,11 +13,18 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
 
-const maximumConfigBytes = 1 << 20
+const (
+	// MaximumBytes is the shared upper bound for a configuration document at
+	// both the HTTP and durable repository boundaries.
+	MaximumBytes = 1 << 20
+
+	lockRetryInterval = 10 * time.Millisecond
+)
 
 // Revision is the SHA-256 digest of the exact bytes stored in a configuration
 // file. It is suitable for optimistic concurrency checks.
@@ -125,14 +133,23 @@ func (repository *FileRepository) Read() (Snapshot, error) {
 // Replace validates configuration and atomically installs its canonical full
 // YAML encoding when expected still identifies the current file. Replacing a
 // semantically identical configuration is a no-op and preserves the original
-// bytes and revision. Replacements preserve only permission bits; ownership,
-// ACLs, extended attributes, and other filesystem metadata are not preserved
-// by the atomic rename.
+// bytes and revision. A content-changing replacement requires an owner-only
+// file mode (0600 or stricter), because the atomic rename preserves permission
+// bits but not ownership, ACLs, extended attributes, or other metadata.
 func (repository *FileRepository) Replace(expected Revision, configuration Config) (change Change, resultErr error) {
+	return repository.ReplaceContext(context.Background(), expected, configuration)
+}
+
+// ReplaceContext is Replace with cancelable advisory-lock acquisition. Once a
+// rename commits, cancellation no longer changes the committed result.
+func (repository *FileRepository) ReplaceContext(ctx context.Context, expected Revision, configuration Config) (change Change, resultErr error) {
+	if ctx == nil {
+		return Change{}, errors.New("replace config context is required")
+	}
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 
-	lock, err := repository.acquireLock(unix.LOCK_EX)
+	lock, err := repository.acquireLock(ctx, unix.LOCK_EX)
 	if err != nil {
 		return Change{}, err
 	}
@@ -152,7 +169,7 @@ func (repository *FileRepository) Replace(expected Revision, configuration Confi
 	if err != nil {
 		return Change{}, err
 	}
-	if len(contents) > maximumConfigBytes {
+	if len(contents) > MaximumBytes {
 		return Change{}, configSizeError(len(contents))
 	}
 	currentCanonical, err := Encode(current.Config)
@@ -162,25 +179,37 @@ func (repository *FileRepository) Replace(expected Revision, configuration Confi
 	if bytes.Equal(contents, currentCanonical) {
 		return repository.change(current, current, nil), nil
 	}
+	if err := validateReplacementMode(current.state.mode); err != nil {
+		return Change{}, err
+	}
 
 	target, err := repository.snapshot(contents, current.state.mode)
 	if err != nil {
 		return Change{}, fmt.Errorf("prepare replacement config %q: %w", repository.path, err)
 	}
-	return repository.commit(current, expected, target)
+	return repository.commit(ctx, current, expected, target)
 }
 
 // Rollback restores the exact bytes and mode replaced by change. It succeeds
 // only when change was produced by this repository and its After revision is
 // still current, so a rollback cannot overwrite a later update.
-// Rollback also restores only the prior permission bits. It cannot restore
+// Rollback also restores only the prior permission bits and therefore applies
+// the same owner-only mode requirement as replacement. It cannot restore
 // ownership, ACLs, extended attributes, or other metadata discarded by a
 // replacement.
 func (repository *FileRepository) Rollback(change Change) (rollback Change, resultErr error) {
+	return repository.RollbackContext(context.Background(), change)
+}
+
+// RollbackContext is Rollback with cancelable advisory-lock acquisition.
+func (repository *FileRepository) RollbackContext(ctx context.Context, change Change) (rollback Change, resultErr error) {
+	if ctx == nil {
+		return Change{}, errors.New("rollback config context is required")
+	}
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 
-	lock, err := repository.acquireLock(unix.LOCK_EX)
+	lock, err := repository.acquireLock(ctx, unix.LOCK_EX)
 	if err != nil {
 		return Change{}, err
 	}
@@ -207,17 +236,27 @@ func (repository *FileRepository) Rollback(change Change) (rollback Change, resu
 		)
 	}
 
+	if bytes.Equal(current.state.contents, change.state.beforeContents) && current.state.mode == change.state.beforeMode {
+		return repository.change(current, current, nil), nil
+	}
+	if err := validateReplacementMode(current.state.mode); err != nil {
+		return Change{}, err
+	}
+	if err := validateReplacementMode(change.state.beforeMode); err != nil {
+		return Change{}, fmt.Errorf("restore prior config mode: %w", err)
+	}
+
 	target, err := repository.snapshot(change.state.beforeContents, change.state.beforeMode)
 	if err != nil {
 		return Change{}, fmt.Errorf("prepare config rollback %q: %w", repository.path, err)
 	}
-	if bytes.Equal(current.state.contents, target.state.contents) && current.state.mode == target.state.mode {
-		return repository.change(current, current, nil), nil
-	}
-	return repository.commit(current, change.state.afterRevision, target)
+	return repository.commit(ctx, current, change.state.afterRevision, target)
 }
 
-func (repository *FileRepository) commit(before Snapshot, expected Revision, target Snapshot) (change Change, resultErr error) {
+func (repository *FileRepository) commit(ctx context.Context, before Snapshot, expected Revision, target Snapshot) (change Change, resultErr error) {
+	if err := ctx.Err(); err != nil {
+		return Change{}, err
+	}
 	directory := filepath.Dir(repository.path)
 	pattern := "." + filepath.Base(repository.path) + ".tmp-*"
 	temporary, err := repository.ops.createTemp(directory, pattern)
@@ -254,6 +293,9 @@ func (repository *FileRepository) commit(before Snapshot, expected Revision, tar
 	if err := repository.ops.close(temporary); err != nil {
 		return Change{}, fmt.Errorf("close temporary config %q: %w", temporaryPath, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return Change{}, err
+	}
 
 	latest, err := repository.read()
 	if err != nil {
@@ -268,6 +310,9 @@ func (repository *FileRepository) commit(before Snapshot, expected Revision, tar
 			before.state.mode.Perm(),
 			latest.state.mode.Perm(),
 		)
+	}
+	if err := ctx.Err(); err != nil {
+		return Change{}, err
 	}
 
 	if err := repository.ops.rename(temporaryPath, repository.path); err != nil {
@@ -295,7 +340,7 @@ func (repository *FileRepository) read() (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("open config %q: %w", repository.path, err)
 	}
-	contents, readErr := io.ReadAll(io.LimitReader(file, maximumConfigBytes+1))
+	contents, readErr := io.ReadAll(io.LimitReader(file, MaximumBytes+1))
 	openedInfo, statErr := file.Stat()
 	closeErr := repository.ops.close(file)
 	if err := errors.Join(readErr, statErr, closeErr); err != nil {
@@ -304,7 +349,7 @@ func (repository *FileRepository) read() (Snapshot, error) {
 	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
 		return Snapshot{}, fmt.Errorf("inspect config %q: file changed while opening", repository.path)
 	}
-	if len(contents) > maximumConfigBytes {
+	if len(contents) > MaximumBytes {
 		return Snapshot{}, configSizeError(len(contents))
 	}
 
@@ -316,7 +361,7 @@ func (repository *FileRepository) read() (Snapshot, error) {
 }
 
 func (repository *FileRepository) snapshot(contents []byte, mode fs.FileMode) (Snapshot, error) {
-	if len(contents) > maximumConfigBytes {
+	if len(contents) > MaximumBytes {
 		return Snapshot{}, configSizeError(len(contents))
 	}
 	configuration, err := Decode(bytes.NewReader(contents))
@@ -353,19 +398,37 @@ func (repository *FileRepository) change(before, after Snapshot, warning error) 
 	}
 }
 
-func (repository *FileRepository) acquireLock(operation int) (*os.File, error) {
+func (repository *FileRepository) acquireLock(ctx context.Context, operation int) (*os.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	lock, err := repository.ops.openLock(repository.lockPath)
 	if err != nil {
 		return nil, fmt.Errorf("open config lock %q: %w", repository.lockPath, err)
 	}
-	if err := repository.ops.flock(lock, operation); err != nil {
-		closeErr := repository.ops.close(lock)
-		return nil, errors.Join(
-			fmt.Errorf("acquire config lock %q: %w", repository.lockPath, err),
-			closeErr,
-		)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, errors.Join(err, repository.ops.close(lock))
+		}
+		err := repository.ops.flock(lock, operation|unix.LOCK_NB)
+		if err == nil {
+			return lock, nil
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) {
+			closeErr := repository.ops.close(lock)
+			return nil, errors.Join(
+				fmt.Errorf("acquire config lock %q: %w", repository.lockPath, err),
+				closeErr,
+			)
+		}
+		timer := time.NewTimer(lockRetryInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, errors.Join(ctx.Err(), repository.ops.close(lock))
+		case <-timer.C:
+		}
 	}
-	return lock, nil
 }
 
 func (repository *FileRepository) releaseLock(lock *os.File) error {
@@ -419,8 +482,19 @@ func writableMode(mode fs.FileMode) fs.FileMode {
 	return mode.Perm()
 }
 
+func validateReplacementMode(mode fs.FileMode) error {
+	permissions := mode.Perm()
+	if permissions&0o077 != 0 {
+		return fmt.Errorf(
+			"config file mode %04o permits group or other access; content replacement requires owner-only permissions",
+			permissions,
+		)
+	}
+	return nil
+}
+
 func configSizeError(size int) error {
-	return fmt.Errorf("config is %d bytes; maximum is %d bytes", size, maximumConfigBytes)
+	return fmt.Errorf("config is %d bytes; maximum is %d bytes", size, MaximumBytes)
 }
 
 func cloneSnapshot(snapshot Snapshot) Snapshot {

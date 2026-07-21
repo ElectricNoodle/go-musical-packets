@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -218,12 +219,28 @@ func (controller *Controller) validate(current, candidate config.Config) (Valida
 // Update performs a serialized validate, classify, compile, persist, publish
 // transaction. Persistence precedes the infallible production atomic publish.
 func (controller *Controller) Update(expected config.Revision, candidate config.Config) (Document, error) {
+	return controller.UpdateContext(context.Background(), expected, candidate)
+}
+
+// UpdateContext is Update with cancellation propagated to repositories that
+// support cancelable mutation. A successful durable commit is still published
+// even if the request is canceled after the commit boundary.
+func (controller *Controller) UpdateContext(ctx context.Context, expected config.Revision, candidate config.Config) (Document, error) {
+	if ctx == nil {
+		return controller.Current(), errors.New("runtime policy update context is required")
+	}
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return controller.Current(), err
+	}
 
 	current := controller.store.current.Load()
 	if current.state == ControllerStateDegraded {
 		return controller.Current(), &DegradedError{Reason: current.warning}
+	}
+	if current.state != ControllerStateOutOfSync && expected != current.revision {
+		return controller.Current(), &config.ConflictError{Expected: expected, Actual: current.revision}
 	}
 	candidate = candidate.Clone()
 	// An out-of-sync retry is an explicit reconciliation. Re-read the durable
@@ -262,7 +279,7 @@ func (controller *Controller) Update(expected config.Revision, candidate config.
 		return controller.Current(), &ReadOnlyError{}
 	}
 
-	change, err := controller.repository.Replace(expected, candidate.Clone())
+	change, err := controller.replace(ctx, expected, candidate.Clone())
 	if err != nil {
 		var conflict *config.ConflictError
 		if errors.As(err, &conflict) && conflict.Actual != current.revision {
@@ -303,6 +320,18 @@ func (controller *Controller) Update(expected config.Revision, candidate config.
 	return controller.Current(), nil
 }
 
+type contextualConfigRepository interface {
+	ReplaceContext(context.Context, config.Revision, config.Config) (config.Change, error)
+	RollbackContext(context.Context, config.Change) (config.Change, error)
+}
+
+func (controller *Controller) replace(ctx context.Context, expected config.Revision, candidate config.Config) (config.Change, error) {
+	if repository, ok := controller.repository.(contextualConfigRepository); ok {
+		return repository.ReplaceContext(ctx, expected, candidate)
+	}
+	return controller.repository.Replace(expected, candidate)
+}
+
 func (controller *Controller) markPersistenceUncertainty(current *policySnapshot, persistErr error) {
 	durable, err := controller.repository.Read()
 	if err == nil && durable.Revision == current.revision {
@@ -324,7 +353,7 @@ func (controller *Controller) applyFailed(current *policySnapshot, change config
 		}
 		return controller.Current(), fmt.Errorf("publish runtime configuration: %w", applyErr)
 	}
-	rollback, rollbackErr := controller.repository.Rollback(change)
+	rollback, rollbackErr := controller.rollback(change)
 	if rollbackErr != nil {
 		warning := errors.Join(applyErr, rollbackErr).Error()
 		controller.store.publish(snapshotWithStatus(current, ControllerStateDegraded, warning))
@@ -336,6 +365,15 @@ func (controller *Controller) applyFailed(current *policySnapshot, change config
 	}
 	controller.store.publish(snapshotWithStatus(current, ControllerStateReady, ""))
 	return controller.Current(), &policyApplyError{apply: applyErr}
+}
+
+func (controller *Controller) rollback(change config.Change) (config.Change, error) {
+	if repository, ok := controller.repository.(contextualConfigRepository); ok {
+		// Once persistence succeeds, rollback must complete independently of the
+		// client connection so active and durable policy do not diverge.
+		return repository.RollbackContext(context.Background(), change)
+	}
+	return controller.repository.Rollback(change)
 }
 
 func snapshotWithStatus(current *policySnapshot, state ControllerState, warning string) *policySnapshot {

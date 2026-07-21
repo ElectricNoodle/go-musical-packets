@@ -16,6 +16,7 @@ import (
 	"github.com/ElectricNoodle/go-musical-packets/internal/config"
 	"github.com/ElectricNoodle/go-musical-packets/internal/flow"
 	"github.com/ElectricNoodle/go-musical-packets/internal/httpserver"
+	"github.com/ElectricNoodle/go-musical-packets/internal/managementapi"
 	"github.com/ElectricNoodle/go-musical-packets/internal/metrics"
 	"github.com/ElectricNoodle/go-musical-packets/internal/midi"
 	"github.com/ElectricNoodle/go-musical-packets/internal/music"
@@ -48,7 +49,8 @@ type Dependencies struct {
 // config path makes that repository authoritative and enables persisted hot
 // configuration updates. The zero value retains the legacy read-only runtime.
 type RunOptions struct {
-	ConfigPath string
+	ConfigPath       string
+	ExpectedRevision config.Revision
 }
 
 func (dependencies Dependencies) withDefaults() Dependencies {
@@ -130,7 +132,14 @@ func RunWithOptionsAndDependencies(
 	if err != nil {
 		return fmt.Errorf("initialize runtime policy: %w", err)
 	}
-	configuration = controller.Current().Config
+	initialPolicy := controller.Current()
+	if options.ExpectedRevision != "" && options.ExpectedRevision != initialPolicy.Revision {
+		return fmt.Errorf("initialize runtime policy: %w", &config.ConflictError{
+			Expected: options.ExpectedRevision,
+			Actual:   initialPolicy.Revision,
+		})
+	}
+	configuration = initialPolicy.Config
 	if configuration.Instance.Role != config.RoleStandalone {
 		return fmt.Errorf("run standalone: instance role %q is unsupported", configuration.Instance.Role)
 	}
@@ -151,6 +160,10 @@ func RunWithOptionsAndDependencies(
 		if !runtimeReady.Load() {
 			return errors.New("application is starting or stopping")
 		}
+		policy := controller.store.current.Load()
+		if policy.state != ControllerStateReady {
+			return fmt.Errorf("runtime configuration state is %s", policy.state)
+		}
 		if configuration.MIDI.Enabled {
 			if manager == nil {
 				return midi.ErrOutputUnavailable
@@ -161,11 +174,6 @@ func RunWithOptionsAndDependencies(
 		}
 		return nil
 	}
-	handler, err := httpserver.NewHandler(bundle.Registry, nil, readiness)
-	if err != nil {
-		return fmt.Errorf("initialize HTTP handler: %w", err)
-	}
-
 	listener, err := dependencies.Listen("tcp", configuration.Server.ListenAddress)
 	if err != nil {
 		return fmt.Errorf("listen on %q: %w", configuration.Server.ListenAddress, err)
@@ -191,6 +199,33 @@ func RunWithOptionsAndDependencies(
 	processing, err := newProcessingComponents(configuration, controller)
 	if err != nil {
 		return err
+	}
+	operationalHandler, err := httpserver.NewHandler(bundle.Registry, nil, readiness)
+	if err != nil {
+		return fmt.Errorf("initialize HTTP handler: %w", err)
+	}
+	var handler http.Handler = operationalHandler
+	managementContext, cancelManagement := context.WithCancel(ctx)
+	defer cancelManagement()
+	if listenerIsLoopback(listener.Addr()) {
+		managementBackend, managementErr := newManagementBackend(controller, &runtimeReady, managementContext)
+		if managementErr != nil {
+			return fmt.Errorf("initialize management backend: %w", managementErr)
+		}
+		managementHandler, managementErr := managementapi.NewHandler(
+			managementBackend,
+			managementapi.Options{AllowedPort: httpPort},
+		)
+		if managementErr != nil {
+			return fmt.Errorf("initialize management API: %w", managementErr)
+		}
+		handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			if request.URL.Path == "/api/v1" || strings.HasPrefix(request.URL.Path, "/api/v1/") {
+				managementHandler.ServeHTTP(response, request)
+				return
+			}
+			operationalHandler.ServeHTTP(response, request)
+		})
 	}
 
 	var scheduler *midi.Scheduler
@@ -273,7 +308,7 @@ func RunWithOptionsAndDependencies(
 	}
 	runtimeReady.Store(true)
 
-	return supervise(ctx, configuration.Server.WriteTimeout, server, serverDone, &runtimeReady, processorCancel, processorDone, scheduler, managerCancel, managerDone)
+	return supervise(ctx, configuration.Server.WriteTimeout, server, serverDone, &runtimeReady, cancelManagement, processorCancel, processorDone, scheduler, managerCancel, managerDone)
 }
 
 type discardSink struct{}
@@ -296,6 +331,11 @@ func listenerPort(address net.Addr) (uint16, error) {
 		return 0, errors.New("listener reported port zero")
 	}
 	return uint16(port), nil
+}
+
+func listenerIsLoopback(address net.Addr) bool {
+	tcpAddress, ok := address.(*net.TCPAddr)
+	return ok && tcpAddress.IP.IsLoopback()
 }
 
 func httpSafetyRules(port uint16, existing []flow.Rule) []flow.Rule {
@@ -362,6 +402,7 @@ func supervise(
 	server *http.Server,
 	serverDone <-chan error,
 	runtimeReady *atomic.Bool,
+	cancelManagement context.CancelFunc,
 	processorCancel context.CancelFunc,
 	processorDone <-chan error,
 	scheduler *midi.Scheduler,
@@ -396,6 +437,7 @@ func supervise(
 	}
 
 	runtimeReady.Store(false)
+	cancelManagement()
 	// Keep these phases deliberately sequential: MIDI reset depends on the
 	// manager output remaining alive until the pipeline can no longer write.
 	if processorCancel != nil {

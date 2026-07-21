@@ -31,6 +31,7 @@ func newProcessingComponents(configuration config.Config, controller *Controller
 			return processingComponents{}, fmt.Errorf("initialize runtime policy: %w", err)
 		}
 	}
+	configuration = controller.Current().Config
 
 	registry, err := flow.NewRegistry(flow.RegistryConfig{
 		Seed:     configuration.Mapping.Seed,
