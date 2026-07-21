@@ -31,9 +31,10 @@ type Snapshot struct {
 
 // ObserveResult describes the registry mutation caused by a packet.
 type ObserveResult struct {
-	Flow    Snapshot
-	Created bool
-	Evicted *Snapshot
+	Flow             Snapshot
+	PreviousLastSeen time.Time
+	Created          bool
+	Evicted          *Snapshot
 }
 
 // Registry retains a bounded, concurrency-safe set of recently observed flows.
@@ -87,8 +88,9 @@ func (r *Registry) Observe(event packet.Event) (ObserveResult, error) {
 	defer r.mu.Unlock()
 
 	if existing, ok := r.flows[id]; ok {
+		previousLastSeen := existing.snapshot.LastSeen
 		r.update(existing, event, direction)
-		return ObserveResult{Flow: existing.snapshot}, nil
+		return ObserveResult{Flow: existing.snapshot, PreviousLastSeen: previousLastSeen}, nil
 	}
 
 	var evicted *Snapshot

@@ -322,6 +322,9 @@ Pure domain packages do not depend directly on Prometheus.
 
 ## Delivery stages
 
+Stages 1 through 7 are implemented. The current implementation frontier is
+stage 8, MIDI scheduling and device recovery.
+
 1. Architecture record and exact behavioral specification.
 2. Go/frontend foundations, config, logging, lifecycle, build metadata, and CI.
 3. macOS/Debian live capture and MIDI technical spike.
@@ -391,4 +394,3 @@ coverage, dependency vulnerability checks, and reproducible build metadata.
 - The UI can complete configuration without hand-editing YAML, accurately shows
   accepted notes, and cannot delay the audio pipeline.
 - Headless configuration and operation remain fully supported on Debian.
-

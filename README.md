@@ -8,8 +8,10 @@ The accepted architecture and delivery plan is in [docs/PLAN.md](docs/PLAN.md).
 
 ## Development status
 
-The project is in its foundation stage. Domain contracts and validation are
-being established before native packet-capture and MIDI integrations are added.
+Delivery stages 1 through 7 are implemented: configuration and lifecycle
+foundations, native capture/MIDI feasibility adapters, deterministic musical
+mapping, bounded flow selection, PCAP replay, and the instrumented live
+processing pipeline. MIDI scheduling and hot-plug recovery are the next stage.
 
 ## Commands
 
@@ -25,3 +27,5 @@ make build
 
 Native capture and MIDI prerequisites are documented in
 [docs/platform-spike.md](docs/platform-spike.md).
+Pipeline ownership, overload behavior, and the initial Prometheus contract are
+documented in [docs/pipeline.md](docs/pipeline.md).
