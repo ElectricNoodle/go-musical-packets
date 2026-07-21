@@ -232,10 +232,43 @@ func (controller *Controller) Update(expected config.Revision, candidate config.
 	return controller.UpdateContext(context.Background(), expected, candidate)
 }
 
+// ConfigMutation changes a controller-owned configuration clone. Mutations
+// must be synchronous, side-effect free, and must not re-enter Controller.
+type ConfigMutation func(*config.Config) error
+
+// Mutate performs an atomic read-modify-write transaction. During explicit
+// out-of-sync reconciliation, mutation is based on the durable configuration
+// so unrelated external edits are not overwritten.
+func (controller *Controller) Mutate(expected config.Revision, mutation ConfigMutation) (Document, error) {
+	return controller.MutateContext(context.Background(), expected, mutation)
+}
+
+// MutateContext is Mutate with cancellation propagated through persistence.
+func (controller *Controller) MutateContext(ctx context.Context, expected config.Revision, mutation ConfigMutation) (Document, error) {
+	if mutation == nil {
+		return controller.Current(), errors.New("runtime policy mutation is required")
+	}
+	return controller.transactContext(ctx, expected, func(base config.Config) (config.Config, error) {
+		candidate := base.Clone()
+		if err := mutation(&candidate); err != nil {
+			return config.Config{}, err
+		}
+		return candidate.Clone(), nil
+	})
+}
+
 // UpdateContext is Update with cancellation propagated to repositories that
 // support cancelable mutation. A successful durable commit is still published
 // even if the request is canceled after the commit boundary.
 func (controller *Controller) UpdateContext(ctx context.Context, expected config.Revision, candidate config.Config) (Document, error) {
+	return controller.transactContext(ctx, expected, func(config.Config) (config.Config, error) {
+		return candidate.Clone(), nil
+	})
+}
+
+type configCandidateBuilder func(config.Config) (config.Config, error)
+
+func (controller *Controller) transactContext(ctx context.Context, expected config.Revision, build configCandidateBuilder) (Document, error) {
 	if ctx == nil {
 		return controller.Current(), errors.New("runtime policy update context is required")
 	}
@@ -252,10 +285,12 @@ func (controller *Controller) UpdateContext(ctx context.Context, expected config
 	if current.state != ControllerStateOutOfSync && expected != current.revision {
 		return controller.Current(), &config.ConflictError{Expected: expected, Actual: current.revision}
 	}
-	candidate = candidate.Clone()
+	base := current.configuration.Clone()
 	// An out-of-sync retry is an explicit reconciliation. Re-read the durable
 	// document and require the caller to identify that exact revision before
-	// allowing the normal hot-field and repository CAS checks to proceed.
+	// allowing the normal hot-field and repository CAS checks to proceed. A
+	// read-modify-write mutation is based on this durable document; a full
+	// replacement builder deliberately ignores it.
 	if current.state == ControllerStateOutOfSync {
 		durable, readErr := controller.repository.Read()
 		if readErr != nil {
@@ -270,7 +305,16 @@ func (controller *Controller) UpdateContext(ctx context.Context, expected config
 			))
 			return controller.Current(), conflict
 		}
+		base = durable.Config.Clone()
 	}
+	candidate, err := build(base)
+	if err != nil {
+		return controller.Current(), err
+	}
+	if err := ctx.Err(); err != nil {
+		return controller.Current(), err
+	}
+	candidate = candidate.Clone()
 	classification, err := controller.validate(current.configuration, candidate)
 	if err != nil {
 		return controller.Current(), err
@@ -287,6 +331,9 @@ func (controller *Controller) UpdateContext(ctx context.Context, expected config
 			return controller.Current(), &config.ConflictError{Expected: expected, Actual: current.revision}
 		}
 		return controller.Current(), &ReadOnlyError{}
+	}
+	if err := ctx.Err(); err != nil {
+		return controller.Current(), err
 	}
 
 	change, err := controller.replace(ctx, expected, candidate.Clone())
