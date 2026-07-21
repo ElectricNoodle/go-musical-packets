@@ -43,6 +43,11 @@ PUT /api/v1/config
 GET /api/v1/flows
 POST /api/v1/flows/mute
 POST /api/v1/flows/solo
+GET /api/v1/rules
+POST /api/v1/rules
+PATCH /api/v1/rules
+PUT /api/v1/rules/{id}
+DELETE /api/v1/rules/{id}
 ```
 
 The `/api/v1` routes are mounted only on an actually loopback-bound listener;

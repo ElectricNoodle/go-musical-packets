@@ -21,13 +21,18 @@ const (
 )
 
 type stubBackend struct {
-	statusFunc   func(context.Context) (Status, error)
-	configFunc   func(context.Context) (ConfigDocument, error)
-	validateFunc func(context.Context, config.Config) (Validation, error)
-	updateFunc   func(context.Context, Revision, config.Config) (ConfigDocument, error)
-	flowsFunc    func(context.Context, FlowPageRequest) (FlowPage, error)
-	mutedFunc    func(context.Context, []string) (FlowOverlay, error)
-	soloedFunc   func(context.Context, []string) (FlowOverlay, error)
+	statusFunc       func(context.Context) (Status, error)
+	configFunc       func(context.Context) (ConfigDocument, error)
+	validateFunc     func(context.Context, config.Config) (Validation, error)
+	updateFunc       func(context.Context, Revision, config.Config) (ConfigDocument, error)
+	rulesFunc        func(context.Context) (RulesDocument, error)
+	createRuleFunc   func(context.Context, Revision, config.RuleConfig) (RulesDocument, error)
+	replaceRuleFunc  func(context.Context, Revision, string, config.RuleConfig) (RulesDocument, error)
+	deleteRuleFunc   func(context.Context, Revision, string) (RulesDocument, error)
+	reorderRulesFunc func(context.Context, Revision, []string) (RulesDocument, error)
+	flowsFunc        func(context.Context, FlowPageRequest) (FlowPage, error)
+	mutedFunc        func(context.Context, []string) (FlowOverlay, error)
+	soloedFunc       func(context.Context, []string) (FlowOverlay, error)
 }
 
 func (backend *stubBackend) Status(ctx context.Context) (Status, error) {
@@ -56,6 +61,41 @@ func (backend *stubBackend) UpdateConfig(ctx context.Context, expected Revision,
 		return backend.updateFunc(ctx, expected, configuration)
 	}
 	return ConfigDocument{Config: configuration, Revision: testRevisionB}, nil
+}
+
+func (backend *stubBackend) Rules(ctx context.Context) (RulesDocument, error) {
+	if backend.rulesFunc != nil {
+		return backend.rulesFunc(ctx)
+	}
+	return RulesDocument{Revision: testRevisionA, Writable: true, Rules: config.RulesConfig{}}, nil
+}
+
+func (backend *stubBackend) CreateRule(ctx context.Context, expected Revision, rule config.RuleConfig) (RulesDocument, error) {
+	if backend.createRuleFunc != nil {
+		return backend.createRuleFunc(ctx, expected, rule)
+	}
+	return RulesDocument{Revision: testRevisionB, Writable: true, Rules: config.RulesConfig{rule}}, nil
+}
+
+func (backend *stubBackend) ReplaceRule(ctx context.Context, expected Revision, id string, rule config.RuleConfig) (RulesDocument, error) {
+	if backend.replaceRuleFunc != nil {
+		return backend.replaceRuleFunc(ctx, expected, id, rule)
+	}
+	return RulesDocument{Revision: testRevisionB, Writable: true, Rules: config.RulesConfig{rule}}, nil
+}
+
+func (backend *stubBackend) DeleteRule(ctx context.Context, expected Revision, id string) (RulesDocument, error) {
+	if backend.deleteRuleFunc != nil {
+		return backend.deleteRuleFunc(ctx, expected, id)
+	}
+	return RulesDocument{Revision: testRevisionB, Writable: true, Rules: config.RulesConfig{}}, nil
+}
+
+func (backend *stubBackend) ReorderRules(ctx context.Context, expected Revision, order []string) (RulesDocument, error) {
+	if backend.reorderRulesFunc != nil {
+		return backend.reorderRulesFunc(ctx, expected, order)
+	}
+	return RulesDocument{Revision: testRevisionB, Writable: true, Rules: config.RulesConfig{}}, nil
 }
 
 func (backend *stubBackend) Flows(ctx context.Context, request FlowPageRequest) (FlowPage, error) {
@@ -429,6 +469,7 @@ func TestBackendErrorMapping(t *testing.T) {
 		{name: "precondition cause only", err: &BackendError{Kind: ErrorPreconditionFailed, Err: errors.New("secret precondition cause")}, status: 412, code: "precondition_failed"},
 		{name: "conflict", err: &BackendError{Kind: ErrorConflict, Code: "restart_required", Detail: "restart", Fields: []string{"capture.interface"}}, status: 409, code: "restart_required", fields: []string{"capture.interface"}},
 		{name: "conflict cause only", err: &BackendError{Kind: ErrorConflict, Err: errors.New("secret conflict cause")}, status: 409, code: "conflict"},
+		{name: "not found", err: &BackendError{Kind: ErrorNotFound, Detail: "missing"}, status: 404, code: "not_found"},
 		{name: "unavailable", err: &BackendError{Kind: ErrorUnavailable, Err: errors.New("disk failed")}, status: 503, code: "unavailable"},
 		{name: "wrapped", err: errors.Join(errors.New("outer"), &BackendError{Kind: ErrorConflict, Detail: "busy"}), status: 409, code: "conflict"},
 		{name: "generic", err: errors.New("secret backend detail"), status: 500, code: "internal_error"},

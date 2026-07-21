@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -219,6 +220,10 @@ func decodeJSONRequest(response http.ResponseWriter, request *http.Request, targ
 		writeProblem(response, request, http.StatusBadRequest, "invalid_body", "request body must contain one JSON value with unique object names", nil)
 		return false
 	}
+	if err := rejectJSONNamesOutsideSchema(contents, target); err != nil {
+		writeProblem(response, request, http.StatusBadRequest, "invalid_body", "request body must contain one valid JSON value matching the schema", nil)
+		return false
+	}
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
@@ -238,6 +243,89 @@ func rejectDuplicateJSONNames(contents []byte) error {
 		return err
 	}
 	return ensureJSONEOF(decoder)
+}
+
+func rejectJSONNamesOutsideSchema(contents []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return err
+	}
+	return validateJSONNames(value, reflect.TypeOf(target))
+}
+
+func validateJSONNames(value any, targetType reflect.Type) error {
+	for targetType != nil && targetType.Kind() == reflect.Pointer {
+		targetType = targetType.Elem()
+	}
+	if targetType == nil || value == nil {
+		return nil
+	}
+
+	switch targetType.Kind() {
+	case reflect.Struct:
+		object, ok := value.(map[string]any)
+		if !ok {
+			return nil
+		}
+		fields := jsonFields(targetType)
+		for name, child := range object {
+			fieldType, exists := fields[name]
+			if !exists {
+				return fmt.Errorf("unknown JSON object name %q", name)
+			}
+			if err := validateJSONNames(child, fieldType); err != nil {
+				return err
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		array, ok := value.([]any)
+		if !ok {
+			return nil
+		}
+		for _, child := range array {
+			if err := validateJSONNames(child, targetType.Elem()); err != nil {
+				return err
+			}
+		}
+	case reflect.Map:
+		object, ok := value.(map[string]any)
+		if !ok || targetType.Key().Kind() != reflect.String {
+			return nil
+		}
+		for _, child := range object {
+			if err := validateJSONNames(child, targetType.Elem()); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func jsonFields(targetType reflect.Type) map[string]reflect.Type {
+	fields := make(map[string]reflect.Type, targetType.NumField())
+	for index := 0; index < targetType.NumField(); index++ {
+		field := targetType.Field(index)
+		if field.PkgPath != "" {
+			continue
+		}
+		name := field.Name
+		if tag, exists := field.Tag.Lookup("json"); exists {
+			name, _, _ = strings.Cut(tag, ",")
+		}
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = field.Name
+		}
+		fields[name] = field.Type
+	}
+	return fields
 }
 
 func scanJSONValue(decoder *json.Decoder, depth int) error {

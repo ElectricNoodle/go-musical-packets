@@ -56,6 +56,11 @@ type Backend interface {
 	Config(context.Context) (ConfigDocument, error)
 	ValidateConfig(context.Context, config.Config) (Validation, error)
 	UpdateConfig(context.Context, Revision, config.Config) (ConfigDocument, error)
+	Rules(context.Context) (RulesDocument, error)
+	CreateRule(context.Context, Revision, config.RuleConfig) (RulesDocument, error)
+	ReplaceRule(context.Context, Revision, string, config.RuleConfig) (RulesDocument, error)
+	DeleteRule(context.Context, Revision, string) (RulesDocument, error)
+	ReorderRules(context.Context, Revision, []string) (RulesDocument, error)
 	Flows(context.Context, FlowPageRequest) (FlowPage, error)
 	SetMutedFlows(context.Context, []string) (FlowOverlay, error)
 	SetSoloedFlows(context.Context, []string) (FlowOverlay, error)
@@ -68,6 +73,7 @@ const (
 	ErrorInvalid            ErrorKind = "invalid"
 	ErrorPreconditionFailed ErrorKind = "precondition_failed"
 	ErrorConflict           ErrorKind = "conflict"
+	ErrorNotFound           ErrorKind = "not_found"
 	ErrorUnavailable        ErrorKind = "unavailable"
 )
 
@@ -145,7 +151,8 @@ func (handler *handler) ServeHTTP(response http.ResponseWriter, request *http.Re
 		return
 	}
 
-	switch request.URL.EscapedPath() {
+	escapedPath := request.URL.EscapedPath()
+	switch escapedPath {
 	case "/api/v1/status":
 		if request.Method != http.MethodGet && request.Method != http.MethodHead {
 			methodNotAllowed(response, request, "GET, HEAD")
@@ -167,6 +174,8 @@ func (handler *handler) ServeHTTP(response http.ResponseWriter, request *http.Re
 			return
 		}
 		handler.validateConfig(response, request)
+	case rulesCollectionPath:
+		handler.serveRulesCollection(response, request)
 	case "/api/v1/flows":
 		if request.Method != http.MethodGet && request.Method != http.MethodHead {
 			methodNotAllowed(response, request, "GET, HEAD")
@@ -186,6 +195,10 @@ func (handler *handler) ServeHTTP(response http.ResponseWriter, request *http.Re
 		}
 		handler.setSoloedFlows(response, request)
 	default:
+		if strings.HasPrefix(escapedPath, rulesCollectionPath+"/") {
+			handler.serveRuleItem(response, request, escapedPath)
+			return
+		}
 		writeProblem(response, request, http.StatusNotFound, "not_found", "the requested management API route does not exist", nil)
 	}
 }
@@ -371,6 +384,10 @@ func writeBackendError(response http.ResponseWriter, request *http.Request, err 
 		status = http.StatusConflict
 		defaultCode = "conflict"
 		defaultDetail = "the management request conflicts with current state"
+	case ErrorNotFound:
+		status = http.StatusNotFound
+		defaultCode = "not_found"
+		defaultDetail = "the requested management resource was not found"
 	case ErrorUnavailable:
 		status = http.StatusServiceUnavailable
 		defaultCode = "unavailable"

@@ -1,7 +1,8 @@
 # Management API
 
-The first stage-ten management slice provides local status and transactional
-configuration endpoints on the standalone HTTP listener.
+The stage-ten management API provides local status, transactional
+configuration, live-flow, and persistent-rule endpoints on the standalone HTTP
+listener.
 
 ## Exposure model
 
@@ -26,6 +27,11 @@ PUT  /api/v1/config
 GET  /api/v1/flows
 POST /api/v1/flows/mute
 POST /api/v1/flows/solo
+GET    /api/v1/rules
+POST   /api/v1/rules
+PATCH  /api/v1/rules
+PUT    /api/v1/rules/{id}
+DELETE /api/v1/rules/{id}
 ```
 
 `GET /api/v1/config` returns canonical full YAML and a strong `ETag` containing
@@ -106,6 +112,42 @@ sanitized status state.
 The status `writable` field means the process was started with a durable config
 repository. It does not promise that a particular mutation will pass mode,
 revision, validation, or persistence checks.
+
+## Persistent rules
+
+`GET /api/v1/rules` returns the complete ordered rule collection, its writable
+state, and the same opaque full-configuration revision used by the config API.
+The response also carries that revision as a strong `ETag`. Rule writes require
+the exact token in `If-Match`, participate in the same atomic concurrency domain
+as full config writes, and return the updated collection and resulting `ETag`.
+
+`POST /api/v1/rules` appends one rule object and returns 201 with its encoded item
+URL in `Location`. `PUT /api/v1/rules/{id}` replaces a rule in place; the body ID
+must exactly match the decoded path ID. `DELETE` removes that item. `PATCH
+/api/v1/rules` accepts a complete, duplicate-free permutation:
+
+```json
+{"order":["exact-dns","broad-web"]}
+```
+
+Rule requests use strict JSON with exact, case-sensitive field names, no
+duplicates or unknown fields, identity encoding, and a 1 MiB limit. Existing
+rule IDs remain arbitrary nonblank strings. Clients must encode an item ID as
+one URL path component; the server unescapes it exactly once without trimming,
+cleaning, or case normalization.
+
+Missing and malformed preconditions return 428 and 400. A stale mutation
+returns 412 and the current durable `ETag`; invalid rules and permutations
+return 422, duplicate identities and path/body identity conflicts return 409,
+and a missing item returns 404. Read-only changes return 409, while runtime,
+persistence, and reconciliation failures return 503. During reconciliation, a
+rule mutation is rebased atomically onto the durable configuration so unrelated
+external changes are not overwritten; external changes that require restart
+remain rejected.
+
+Stored order is preserved, but exact-flow rules always occupy the pinned tier
+ahead of broad rules. Reordering therefore changes effective first-match
+precedence within each tier, not between those tiers.
 
 ## Live flows and temporary overlays
 
