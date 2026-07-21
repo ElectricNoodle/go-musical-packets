@@ -8,7 +8,7 @@ The accepted architecture and delivery plan is in [docs/PLAN.md](docs/PLAN.md).
 
 ## Development status
 
-Delivery stages 1 through 11 are implemented. The local management API includes
+Delivery stages 1 through 12 are implemented. The local management API includes
 transactional configuration, capture-interface and MIDI discovery, MIDI
 audition and panic, bounded flow snapshots, temporary mute/solo controls, and
 ordered persistent-rule mutations. The embedded React/TypeScript foundation
@@ -21,7 +21,9 @@ backend-authored decision explanation, and `/rules` provides revision-guarded
 ordering, editing, duplication, deletion, shadow warnings, current match counts,
 and atomic import/export. Restart-required drafts can be durably saved without
 changing the active process, then revised or discarded before restart. The
-piano roll and musical viewer are next.
+`/viewer` workspace now renders scheduler-accepted notes in a bounded live
+piano roll with keyboard, channel, mapping, rate, and accessible event views.
+The peer WebSocket protocol with channel preservation is next.
 
 ## Commands
 

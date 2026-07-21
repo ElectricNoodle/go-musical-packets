@@ -1,6 +1,6 @@
 # Embedded frontend
 
-Stage 11 uses a React and TypeScript single-page application built by Vite. The
+The stage-12 frontend uses a React and TypeScript single-page application built by Vite. The
 production build is emitted into `internal/webui/dist` and embedded into the Go
 binary. Hashed assets receive an immutable one-year cache policy; the HTML
 shell and client-side route fallbacks are never cached.
@@ -56,9 +56,10 @@ the pending restart explicit.
 
 Frontend tests use Vitest, jsdom, and Testing Library. They cover YAML/ETag
 transport, live-safe validation and apply, restart classification, MIDI panic,
-flow explanations, and ordered rule mutations. The UI uses semantic controls,
-keyboard-visible focus, non-color status cues, responsive layouts, and
-reduced-motion behavior.
+flow explanations, ordered rule mutations, malformed viewer frames, bounded
+note history, pause behavior, and live rate derivation. The UI uses semantic
+controls, keyboard-visible focus, non-color status cues, responsive layouts,
+and reduced-motion behavior.
 
 ## Flow explorer
 
@@ -110,5 +111,30 @@ the portable ordered rule array. Edit dialogs warn before discarding unsaved
 work and protect dirty forms from accidental navigation. Read-only runtimes
 remain inspectable and exportable while all write controls are disabled.
 
-Stage 11 is complete. The piano roll and musical viewer are the next frontend
-delivery stage.
+## Musical viewer
+
+The `/viewer` workspace consumes `WS /api/v1/events`. It displays only notes
+whose Note On was accepted by the local scheduler, including management MIDI
+auditions; rate-limited, polyphony-limited, retrigger-limited, unavailable, and
+failed writes are absent. Every event carries a server-authored acceptance time
+so the moving playhead represents local playback rather than packet-capture
+time.
+
+The primary Apache ECharts Canvas piano roll uses time horizontally and MIDI
+pitch vertically. Note width represents scheduled duration, brightness
+represents velocity, and color can represent channel, mode, source, or flow.
+Supporting views provide an illuminated keyboard, selectable root/mode/flow
+explanation with scale notes, 16
+channel activity lanes, packet-versus-accepted-note rates, and a semantic event
+log.
+
+Server connections receive private queues bounded by
+`performance.ui_queue_capacity`. Publishers never wait for a browser; a full
+queue drops its oldest visual event in favor of the newest and reports the drop
+to that client. Updates are batched at 10 Hz. The browser retains at most 512
+notes, 60 rate samples, and 24 rendered log rows, reconnects with bounded
+exponential delay, ignores malformed frames, and can pause or clear local
+history without affecting the runtime.
+
+Stage 12 is complete. The peer WebSocket protocol with channel preservation is
+the next delivery stage.

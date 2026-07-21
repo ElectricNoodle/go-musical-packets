@@ -115,12 +115,27 @@ func TestNewManagementObserverRejectsDuplicateRegistration(t *testing.T) {
 	}
 }
 
+func TestUIObserverExportsBoundedViewerMetrics(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	observer, err := NewUIObserver("musical_packets", registry)
+	if err != nil {
+		t.Fatalf("NewUIObserver() error = %v", err)
+	}
+	observer.Clients(2)
+	observer.Events("sent", 7)
+	observer.Events("dropped", 3)
+
+	assertMetricValue(t, observer.clients, 2)
+	assertMetricValue(t, observer.events.WithLabelValues("sent"), 7)
+	assertMetricValue(t, observer.events.WithLabelValues("dropped"), 3)
+}
+
 func TestBundleIncludesManagementObserver(t *testing.T) {
 	bundle, err := New("musical_packets")
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	if bundle.Registry == nil || bundle.Pipeline == nil || bundle.MIDI == nil || bundle.Management == nil {
+	if bundle.Registry == nil || bundle.Pipeline == nil || bundle.MIDI == nil || bundle.Management == nil || bundle.UI == nil {
 		t.Fatalf("New() returned incomplete bundle: %#v", bundle)
 	}
 }

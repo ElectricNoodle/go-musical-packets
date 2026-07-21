@@ -3,6 +3,7 @@ module github.com/ElectricNoodle/go-musical-packets
 go 1.24.2
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/gopacket/gopacket v1.6.0
 	github.com/prometheus/client_golang v1.23.2
 	gitlab.com/gomidi/midi/v2 v2.3.23

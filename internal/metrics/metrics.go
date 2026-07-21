@@ -16,6 +16,7 @@ type Bundle struct {
 	Pipeline   *PipelineObserver
 	MIDI       *MIDIObserver
 	Management *ManagementObserver
+	UI         *UIObserver
 }
 
 // New constructs an isolated registry with Go, process, and pipeline metrics.
@@ -39,7 +40,50 @@ func New(namespace string) (*Bundle, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Bundle{Registry: registry, Pipeline: observer, MIDI: midiObserver, Management: managementObserver}, nil
+	uiObserver, err := NewUIObserver(namespace, registry)
+	if err != nil {
+		return nil, err
+	}
+	return &Bundle{Registry: registry, Pipeline: observer, MIDI: midiObserver, Management: managementObserver, UI: uiObserver}, nil
+}
+
+// UIObserver implements the browser-event stream observer contract.
+type UIObserver struct {
+	clients prometheus.Gauge
+	events  *prometheus.CounterVec
+}
+
+// NewUIObserver registers bounded live-viewer collectors.
+func NewUIObserver(namespace string, registerer prometheus.Registerer) (*UIObserver, error) {
+	if registerer == nil {
+		return nil, fmt.Errorf("Prometheus registerer is required")
+	}
+	observer := &UIObserver{
+		clients: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Name: "ui_clients", Help: "Currently connected live-viewer clients.",
+		}),
+		events: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace, Name: "ui_events_total", Help: "Live-viewer note events by bounded delivery result.",
+		}, []string{"result"}),
+	}
+	if err := registerer.Register(observer.clients); err != nil {
+		return nil, fmt.Errorf("register UI client metric: %w", err)
+	}
+	if err := registerer.Register(observer.events); err != nil {
+		registerer.Unregister(observer.clients)
+		return nil, fmt.Errorf("register UI event metric: %w", err)
+	}
+	return observer, nil
+}
+
+func (observer *UIObserver) Clients(count int) {
+	observer.clients.Set(float64(count))
+}
+
+func (observer *UIObserver) Events(result string, count int) {
+	if count > 0 {
+		observer.events.WithLabelValues(result).Add(float64(count))
+	}
 }
 
 // ManagementObserver implements the management API observer contract using

@@ -116,6 +116,31 @@ export interface RuntimeSnapshot {
   midi: MIDIDevicesDocument
 }
 
+export interface LiveNoteEvent {
+	id: string
+	origin: string
+	sequence: number
+	mapping_version: string
+	flow_id: string
+	mode: string
+	root: number
+	note: number
+	velocity: number
+	duration_ms: number
+	channel: number
+	created_at: string
+	accepted_at: string
+}
+
+export interface LiveNoteBatch {
+	type: 'notes'
+	sent_at: string
+	dropped: number
+	packet_total: number
+	note_total: number
+	notes: LiveNoteEvent[]
+}
+
 export interface FlowEndpoint {
   address: string
   port: number

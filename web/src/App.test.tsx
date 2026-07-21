@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { snapshot, stubClient } from './test/fixtures'
 
-afterEach(() => window.history.replaceState(null, '', '/'))
+afterEach(() => {
+	window.history.replaceState(null, '', '/')
+	vi.unstubAllGlobals()
+})
 
 describe('setup assistant', () => {
   it('loads runtime boundaries and applies a validated live-safe change', async () => {
@@ -109,7 +112,7 @@ describe('setup assistant', () => {
     expect(window.location.pathname).toBe('/flows')
   })
 
-  it('navigates to the ordered rules workspace', async () => {
+	it('navigates to the ordered rules workspace', async () => {
     const client = stubClient()
     const user = userEvent.setup()
     render(<App client={client} />)
@@ -117,6 +120,25 @@ describe('setup assistant', () => {
     await user.click(await screen.findByRole('link', { name: 'Rules' }))
 
     expect(await screen.findByRole('heading', { name: /order the traffic/i })).toBeInTheDocument()
-    expect(window.location.pathname).toBe('/rules')
-  })
+		expect(window.location.pathname).toBe('/rules')
+	})
+
+	it('navigates to the live musical viewer', async () => {
+		class TestWebSocket {
+			onopen = null
+			onmessage = null
+			onclose = null
+			onerror = null
+			close() {}
+		}
+		vi.stubGlobal('WebSocket', TestWebSocket)
+		const client = stubClient()
+		const user = userEvent.setup()
+		render(<App client={client} />)
+
+		await user.click(await screen.findByRole('link', { name: 'Viewer' }))
+
+		expect(await screen.findByRole('heading', { name: /see what the scheduler accepted/i })).toBeInTheDocument()
+		expect(window.location.pathname).toBe('/viewer')
+	})
 })

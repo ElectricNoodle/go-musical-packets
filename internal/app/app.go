@@ -21,6 +21,7 @@ import (
 	"github.com/ElectricNoodle/go-musical-packets/internal/midi"
 	"github.com/ElectricNoodle/go-musical-packets/internal/music"
 	"github.com/ElectricNoodle/go-musical-packets/internal/pipeline"
+	"github.com/ElectricNoodle/go-musical-packets/internal/uistream"
 	"github.com/ElectricNoodle/go-musical-packets/internal/webui"
 )
 
@@ -159,6 +160,7 @@ func RunWithOptionsAndDependencies(
 	if err != nil {
 		return fmt.Errorf("initialize metrics: %w", err)
 	}
+	viewerStream := uistream.New(configuration.Performance.UIQueueCapacity, bundle.UI)
 	var manager *midi.Manager
 	var runtimeReady atomic.Bool
 	readiness := func(context.Context) error {
@@ -214,6 +216,7 @@ func RunWithOptionsAndDependencies(
 	defer cancelManagement()
 
 	var midiRuntime *midi.Runtime
+	var acceptedMIDI managementMIDI
 	var managerCancel context.CancelFunc
 	var managerDone chan error
 	if configuration.MIDI.Enabled {
@@ -223,6 +226,7 @@ func RunWithOptionsAndDependencies(
 		}
 		manager = components.manager
 		midiRuntime = components.runtime
+		acceptedMIDI = &viewerMIDI{runtime: midiRuntime, stream: viewerStream}
 
 		managerContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
 		managerCancel = cancel
@@ -245,7 +249,7 @@ func RunWithOptionsAndDependencies(
 			controller,
 			processing.registry,
 			dependencies.Interfaces,
-			midiRuntime,
+			acceptedMIDI,
 			&runtimeReady,
 			managementContext,
 		)
@@ -269,7 +273,12 @@ func RunWithOptionsAndDependencies(
 				managerDone,
 			)
 		}
+		eventHandler := uistream.NewHandler(managementContext, viewerStream, httpPort)
 		handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			if request.URL.EscapedPath() == "/api/v1/events" {
+				eventHandler.ServeHTTP(response, request)
+				return
+			}
 			if request.URL.Path == "/api" || strings.HasPrefix(request.URL.Path, "/api/") {
 				managementHandler.ServeHTTP(response, request)
 				return
@@ -306,10 +315,13 @@ func RunWithOptionsAndDependencies(
 		}
 
 		sink := pipeline.Sink(discardSink{})
-		if midiRuntime != nil {
-			sink = midiRuntime
+		if acceptedMIDI != nil {
+			sink = acceptedMIDI
 		}
-		processor, err = newProcessor(configuration, processing, source, sink, bundle.Pipeline)
+		processor, err = newProcessor(configuration, processing, source, sink, viewerPipelineObserver{
+			metrics: bundle.Pipeline,
+			stream:  viewerStream,
+		})
 		if err != nil {
 			pipelineErr := errors.Join(err, source.Close())
 			return shutdownStartup(pipelineErr, midiRuntime, managerCancel, managerDone)

@@ -327,15 +327,16 @@ Pure domain packages do not depend directly on Prometheus.
 
 ## Delivery stages
 
-Stages 1 through 11 are implemented. Frontend foundations, the setup assistant,
+Stages 1 through 12 are implemented. Frontend foundations, the setup assistant,
 and the bounded flow table with
 temporary mute/solo controls, observed rates, and authoritative rule/musical
 annotations are implemented. Exact-flow pinning and constrained generalized
 rule creation are also implemented. Backend-authored match explanations and the
 complete revision-guarded ordered rule workspace are implemented. Validated
 restart-required drafts can be durably saved, revised, or discarded without
-changing the active runtime generation. The piano roll and musical viewer are
-the current stage-12 frontier.
+changing the active runtime generation. The bounded piano roll, musical viewer,
+and scheduler-accepted local event stream are implemented. The peer WebSocket
+protocol with channel preservation is the current stage-13 frontier.
 
 1. Architecture record and exact behavioral specification.
 2. Go foundations, config, logging, lifecycle, build metadata, and CI.

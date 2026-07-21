@@ -40,6 +40,7 @@ PUT    /api/v1/rules
 PATCH  /api/v1/rules
 PUT    /api/v1/rules/{id}
 DELETE /api/v1/rules/{id}
+WS     /api/v1/events
 ```
 
 `GET /api/v1/config` returns canonical full YAML and a strong `ETag` containing
@@ -273,6 +274,44 @@ then submits one exact-flow, protocol, or latest-destination-service rule with
 that exact `If-Match` value. A 412 response causes a read-only refresh and asks
 the user to review and resubmit; the client does not blindly retry a mutation.
 
+## Live viewer events
+
+`GET /api/v1/events` upgrades to a same-origin WebSocket only for a loopback
+peer, loopback authority, and the actual listener port. It is a local UI stream,
+not the stage-13 peer protocol. Each client receives JSON batches at 10 Hz:
+
+```json
+{
+  "type": "notes",
+  "sent_at": "2026-07-21T15:00:00Z",
+  "dropped": 0,
+  "packet_total": 120,
+  "note_total": 8,
+  "notes": [{
+    "id": "node:flow:8",
+    "origin": "node",
+    "sequence": 8,
+    "mapping_version": "flow-mode-v1",
+    "flow_id": "0123456789abcdef01234567",
+    "mode": "dorian",
+    "root": 2,
+    "note": 62,
+    "velocity": 96,
+    "duration_ms": 250,
+    "channel": 3,
+    "created_at": "2026-07-21T14:59:59.900Z",
+    "accepted_at": "2026-07-21T15:00:00Z"
+  }]
+}
+```
+
+`packet_total` and `note_total` are monotonic process counters used to derive
+rates without sending individual packet events. `notes` contains scheduler-
+accepted triggers only. Each client queue is fixed at
+`performance.ui_queue_capacity`; full queues discard the oldest UI event and
+increment `dropped`. Disconnecting or slowing a client cannot delay capture,
+mapping, or MIDI.
+
 ## Metrics
 
 Management instrumentation uses normalized, bounded labels. Request counts use
@@ -286,4 +325,6 @@ or `error`.
 musical_packets_management_api_requests_total{route,method,result}
 musical_packets_management_api_request_duration_seconds{route,method}
 musical_packets_management_config_updates_total{result}
+musical_packets_ui_clients
+musical_packets_ui_events_total{result}
 ```
