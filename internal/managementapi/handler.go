@@ -63,6 +63,7 @@ type Backend interface {
 	PanicMIDI(context.Context) error
 	Rules(context.Context) (RulesDocument, error)
 	CreateRule(context.Context, Revision, config.RuleConfig) (RulesDocument, error)
+	ReplaceRules(context.Context, Revision, config.RulesConfig) (RulesDocument, error)
 	ReplaceRule(context.Context, Revision, string, config.RuleConfig) (RulesDocument, error)
 	DeleteRule(context.Context, Revision, string) (RulesDocument, error)
 	ReorderRules(context.Context, Revision, []string) (RulesDocument, error)

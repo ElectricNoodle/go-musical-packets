@@ -48,7 +48,9 @@ export const flowPage: FlowPage = {
       first_seen: '2026-07-21T09:59:00Z', last_seen: '2026-07-21T10:00:00Z',
       packets: 240, bytes: 19200, packets_a_to_b: 140, packets_b_to_a: 100,
       muted: false, soloed: false, state: 'play', channel: 4,
-      rule_id: 'web-traffic', rule_tier: 'user', mode: 'dorian', root: 2,
+      rule_id: 'web-traffic', rule_tier: 'user', rule_name: 'Web traffic',
+      decision_reason: 'user rule web-traffic matched every configured predicate',
+      matched_predicates: ['protocol tcp', 'destination ports 443'], mode: 'dorian', root: 2,
     },
     {
       id: 'fedcba9876543210fedcba98', protocol: 'udp',
@@ -59,7 +61,8 @@ export const flowPage: FlowPage = {
       first_seen: '2026-07-21T09:58:00Z', last_seen: '2026-07-21T09:59:30Z',
       packets: 12, bytes: 980, packets_a_to_b: 12, packets_b_to_a: 0,
       muted: true, soloed: false, state: 'ignore', channel: 1,
-      rule_tier: 'temporary_mute', mode: 'lydian', root: 7,
+      rule_tier: 'temporary_mute', decision_reason: 'the flow is in the temporary mute set',
+      matched_predicates: [], mode: 'lydian', root: 7,
     },
   ],
   overlay: { muted: ['fedcba9876543210fedcba98'], soloed: [] },
@@ -95,6 +98,10 @@ export function stubClient(overrides: Partial<ManagementClient> = {}): Managemen
       etag: '"rules-revision-b"',
       rules: [...rulesDocument.rules, rule],
     })),
+    replaceRules: vi.fn().mockImplementation(async (rules) => ({ ...rulesDocument, rules })),
+    replaceRule: vi.fn().mockImplementation(async (_id, rule) => ({ ...rulesDocument, rules: [rule] })),
+    deleteRule: vi.fn().mockResolvedValue(rulesDocument),
+    reorderRules: vi.fn().mockResolvedValue(rulesDocument),
     ...overrides,
   }
 }

@@ -134,10 +134,18 @@ func TestReplaceDeleteAndReorderRules(t *testing.T) {
 	replacement := testRule("a/b")
 	wantDocument := RulesDocument{Revision: testRevisionB, Writable: false, Rules: config.RulesConfig{replacement, testRule("other")}}
 	var replaceID string
+	var replacedRules config.RulesConfig
 	var replaced config.RuleConfig
 	var deletedID string
 	var order []string
 	backend := &stubBackend{
+		replaceRulesFunc: func(_ context.Context, expected Revision, rules config.RulesConfig) (RulesDocument, error) {
+			if expected != testRevisionA {
+				t.Fatalf("ReplaceRules revision = %q, want %q", expected, testRevisionA)
+			}
+			replacedRules = rules
+			return wantDocument, nil
+		},
 		replaceRuleFunc: func(_ context.Context, expected Revision, id string, rule config.RuleConfig) (RulesDocument, error) {
 			if expected != testRevisionA {
 				t.Fatalf("ReplaceRule revision = %q, want %q", expected, testRevisionA)
@@ -162,6 +170,16 @@ func TestReplaceDeleteAndReorderRules(t *testing.T) {
 		},
 	}
 	handler := mustHandler(t, backend)
+
+	replaceCollectionRequest := localRequestFor(http.MethodPut, rulesCollectionPath, `{"rules":[`+mustRuleJSON(t, replacement)+`]}`)
+	replaceCollectionRequest.Header.Set("Content-Type", "application/json")
+	replaceCollectionRequest.Header.Set("If-Match", `"`+testRevisionA+`"`)
+	replaceCollectionResponse := serve(handler, replaceCollectionRequest)
+	assertStatus(t, replaceCollectionResponse, http.StatusOK)
+	assertRulesResponse(t, replaceCollectionResponse, wantDocument)
+	if !reflect.DeepEqual(replacedRules, config.RulesConfig{replacement}) {
+		t.Fatalf("ReplaceRules received %#v", replacedRules)
+	}
 
 	replaceRequest := ruleJSONRequest(t, http.MethodPut, rulesCollectionPath+"/a%2Fb", replacement, testRevisionA)
 	replaceResponse := serve(handler, replaceRequest)
@@ -313,11 +331,12 @@ func TestRuleRouteMethodMatrix(t *testing.T) {
 		{
 			name:  "collection",
 			path:  rulesCollectionPath,
-			allow: "GET, HEAD, POST, PATCH",
+			allow: "GET, HEAD, POST, PUT, PATCH",
 			allowed: map[string]int{
 				http.MethodGet:   http.StatusOK,
 				http.MethodHead:  http.StatusOK,
 				http.MethodPost:  http.StatusCreated,
+				http.MethodPut:   http.StatusOK,
 				http.MethodPatch: http.StatusOK,
 			},
 		},
@@ -336,7 +355,9 @@ func TestRuleRouteMethodMatrix(t *testing.T) {
 		for _, method := range methods {
 			t.Run(test.name+"/"+method, func(t *testing.T) {
 				body := ""
-				if method == http.MethodPost || method == http.MethodPut {
+				if method == http.MethodPut && test.name == "collection" {
+					body = `{"rules":[]}`
+				} else if method == http.MethodPost || method == http.MethodPut {
 					body = mustRuleJSON(t, testRule("item"))
 				} else if method == http.MethodPatch {
 					body = `{"order":[]}`
@@ -375,6 +396,7 @@ func TestRuleMutationsRequireValidIfMatchBeforeBody(t *testing.T) {
 		path   string
 	}{
 		{name: "create", method: http.MethodPost, path: rulesCollectionPath},
+		{name: "replace collection", method: http.MethodPut, path: rulesCollectionPath},
 		{name: "reorder", method: http.MethodPatch, path: rulesCollectionPath},
 		{name: "replace", method: http.MethodPut, path: rulesCollectionPath + "/item"},
 		{name: "delete", method: http.MethodDelete, path: rulesCollectionPath + "/item"},
@@ -388,6 +410,18 @@ func TestRuleMutationsRequireValidIfMatchBeforeBody(t *testing.T) {
 			request.Header.Set("If-Match", `W/"`+testRevisionA+`"`)
 			assertProblem(t, serve(mustHandler(t, &stubBackend{}), request), http.StatusBadRequest, "invalid_if_match")
 		})
+	}
+}
+
+func TestReplaceRulesRequiresArray(t *testing.T) {
+	for _, body := range []string{`{}`, `{"rules":null}`} {
+		request := localRequestFor(http.MethodPut, rulesCollectionPath, body)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("If-Match", `"`+testRevisionA+`"`)
+		problem := assertProblem(t, serve(mustHandler(t, &stubBackend{}), request), http.StatusUnprocessableEntity, "invalid_rule")
+		if !reflect.DeepEqual(problem.Fields, []string{"rules"}) {
+			t.Fatalf("fields = %#v, want rules", problem.Fields)
+		}
 	}
 }
 

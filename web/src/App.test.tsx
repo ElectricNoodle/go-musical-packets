@@ -77,4 +77,15 @@ describe('setup assistant', () => {
     expect(await screen.findByRole('heading', { name: /find the traffic worth hearing/i })).toBeInTheDocument()
     expect(window.location.pathname).toBe('/flows')
   })
+
+  it('navigates to the ordered rules workspace', async () => {
+    const client = stubClient()
+    const user = userEvent.setup()
+    render(<App client={client} />)
+
+    await user.click(await screen.findByRole('link', { name: 'Rules' }))
+
+    expect(await screen.findByRole('heading', { name: /order the traffic/i })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/rules')
+  })
 })

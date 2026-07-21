@@ -56,6 +56,9 @@ type FlowSnapshot struct {
 	Channel           uint8        `json:"channel"`
 	RuleID            string       `json:"rule_id,omitempty"`
 	RuleTier          string       `json:"rule_tier"`
+	RuleName          string       `json:"rule_name,omitempty"`
+	DecisionReason    string       `json:"decision_reason"`
+	MatchedPredicates []string     `json:"matched_predicates"`
 	Mode              string       `json:"mode"`
 	Root              uint8        `json:"root"`
 }

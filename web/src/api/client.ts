@@ -41,11 +41,20 @@ export interface ManagementClient {
   setSoloedFlows(flowIDs: string[], signal?: AbortSignal): Promise<FlowOverlay>
   getRules(signal?: AbortSignal): Promise<RulesDocument>
   createRule(rule: RuleConfig, revision: string, signal?: AbortSignal): Promise<RulesDocument>
+  replaceRules(rules: RuleConfig[], revision: string, signal?: AbortSignal): Promise<RulesDocument>
+  replaceRule(id: string, rule: RuleConfig, revision: string, signal?: AbortSignal): Promise<RulesDocument>
+  deleteRule(id: string, revision: string, signal?: AbortSignal): Promise<RulesDocument>
+  reorderRules(order: string[], revision: string, signal?: AbortSignal): Promise<RulesDocument>
 }
 
 const yamlHeaders = {
   'Content-Type': 'application/yaml',
 } as const
+
+function rulePath(id: string) {
+  const escaped = id === '.' ? '%2E' : id === '..' ? '%2E%2E' : encodeURIComponent(id)
+  return `/api/v1/rules/${escaped}`
+}
 
 export function createManagementClient(fetcher: typeof fetch = fetch): ManagementClient {
   const request = async (path: string, init: RequestInit = {}): Promise<Response> => {
@@ -147,6 +156,29 @@ export function createManagementClient(fetcher: typeof fetch = fetch): Managemen
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'If-Match': revision },
       body: JSON.stringify(rule),
+      signal,
+    })),
+    replaceRules: async (rules, revision, signal) => rulesDocument(await request('/api/v1/rules', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'If-Match': revision },
+      body: JSON.stringify({ rules }),
+      signal,
+    })),
+    replaceRule: async (id, rule, revision, signal) => rulesDocument(await request(rulePath(id), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'If-Match': revision },
+      body: JSON.stringify(rule),
+      signal,
+    })),
+    deleteRule: async (id, revision, signal) => rulesDocument(await request(rulePath(id), {
+      method: 'DELETE',
+      headers: { 'If-Match': revision },
+      signal,
+    })),
+    reorderRules: async (order, revision, signal) => rulesDocument(await request('/api/v1/rules', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'If-Match': revision },
+      body: JSON.stringify({ order }),
       signal,
     })),
   }

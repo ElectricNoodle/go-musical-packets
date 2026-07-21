@@ -26,6 +26,10 @@ type reorderRulesRequest struct {
 	Order []string `json:"order"`
 }
 
+type replaceRulesRequest struct {
+	Rules config.RulesConfig `json:"rules"`
+}
+
 func (handler *handler) serveRulesCollection(response http.ResponseWriter, request *http.Request) {
 	if rejectRulesQuery(response, request) {
 		return
@@ -35,11 +39,34 @@ func (handler *handler) serveRulesCollection(response http.ResponseWriter, reque
 		handler.listRules(response, request)
 	case http.MethodPost:
 		handler.createRule(response, request)
+	case http.MethodPut:
+		handler.replaceRules(response, request)
 	case http.MethodPatch:
 		handler.reorderRules(response, request)
 	default:
-		methodNotAllowed(response, request, "GET, HEAD, POST, PATCH")
+		methodNotAllowed(response, request, "GET, HEAD, POST, PUT, PATCH")
 	}
+}
+
+func (handler *handler) replaceRules(response http.ResponseWriter, request *http.Request) {
+	expected, ok := requestRevision(response, request)
+	if !ok {
+		return
+	}
+	var body replaceRulesRequest
+	if !decodeJSONRequest(response, request, &body) {
+		return
+	}
+	if body.Rules == nil {
+		writeProblem(response, request, http.StatusUnprocessableEntity, "invalid_rule", "rules must be an array", []string{"rules"})
+		return
+	}
+	document, err := handler.backend.ReplaceRules(request.Context(), expected, body.Rules)
+	if err != nil {
+		writeBackendError(response, request, err)
+		return
+	}
+	writeRulesDocument(response, request, http.StatusOK, document, "")
 }
 
 func (handler *handler) serveRuleItem(response http.ResponseWriter, request *http.Request, escapedPath string) {

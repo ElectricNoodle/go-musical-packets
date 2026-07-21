@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
+	"github.com/ElectricNoodle/go-musical-packets/internal/config"
 	"github.com/ElectricNoodle/go-musical-packets/internal/flow"
 	"github.com/ElectricNoodle/go-musical-packets/internal/managementapi"
 	"github.com/ElectricNoodle/go-musical-packets/internal/music"
@@ -39,7 +41,7 @@ func (backend *managementBackend) Flows(ctx context.Context, request managementa
 	for _, snapshot := range snapshots {
 		_, muted := overlay.Muted[snapshot.ID]
 		_, soloed := overlay.Soloed[snapshot.ID]
-		converted, err := managementFlowSnapshot(snapshot, muted, soloed, policy.selector, overlay)
+		converted, err := managementFlowSnapshot(snapshot, muted, soloed, policy.selector, overlay, policy.configuration.Rules)
 		if err != nil {
 			return managementapi.FlowPage{}, fmt.Errorf("annotate flow %q: %w", snapshot.ID, err)
 		}
@@ -149,6 +151,7 @@ func managementFlowSnapshot(
 	muted, soloed bool,
 	selector *flow.Selector,
 	overlay flow.Overlay,
+	rules config.RulesConfig,
 ) (managementapi.FlowSnapshot, error) {
 	selection, err := selector.Evaluate(snapshot.LastEvent, overlay)
 	if err != nil {
@@ -158,6 +161,7 @@ func managementFlowSnapshot(
 	if err != nil {
 		return managementapi.FlowSnapshot{}, fmt.Errorf("derive musical identity: %w", err)
 	}
+	ruleName, reason, predicates := managementFlowExplanation(selection, rules)
 	return managementapi.FlowSnapshot{
 		ID:       snapshot.ID,
 		Protocol: string(snapshot.Key.Protocol),
@@ -177,21 +181,81 @@ func managementFlowSnapshot(
 			Address: snapshot.LastEvent.Destination.Addr.String(),
 			Port:    snapshot.LastEvent.Destination.Port,
 		},
-		FirstSeen:   snapshot.FirstSeen,
-		LastSeen:    snapshot.LastSeen,
-		Packets:     snapshot.Packets,
-		Bytes:       snapshot.Bytes,
-		PacketsAToB: snapshot.PacketsAToB,
-		PacketsBToA: snapshot.PacketsBToA,
-		Muted:       muted,
-		Soloed:      soloed,
-		State:       string(selection.State),
-		Channel:     selection.Channel,
-		RuleID:      selection.RuleID,
-		RuleTier:    selection.Tier,
-		Mode:        identity.Mode.String(),
-		Root:        identity.Root,
+		FirstSeen:         snapshot.FirstSeen,
+		LastSeen:          snapshot.LastSeen,
+		Packets:           snapshot.Packets,
+		Bytes:             snapshot.Bytes,
+		PacketsAToB:       snapshot.PacketsAToB,
+		PacketsBToA:       snapshot.PacketsBToA,
+		Muted:             muted,
+		Soloed:            soloed,
+		State:             string(selection.State),
+		Channel:           selection.Channel,
+		RuleID:            selection.RuleID,
+		RuleTier:          selection.Tier,
+		RuleName:          ruleName,
+		DecisionReason:    reason,
+		MatchedPredicates: predicates,
+		Mode:              identity.Mode.String(),
+		Root:              identity.Root,
 	}, nil
+}
+
+func managementFlowExplanation(selection flow.Selection, rules config.RulesConfig) (string, string, []string) {
+	predicates := make([]string, 0)
+	switch selection.Tier {
+	case "temporary_mute":
+		return "", "the flow is in the temporary mute set", predicates
+	case "temporary_solo":
+		return "", "another flow is soloed, so this flow is monitored", predicates
+	case "default":
+		return "", "no higher-precedence rule matched the latest packet", predicates
+	case "safety":
+		return "", fmt.Sprintf("safety rule %s matched the latest packet", selection.RuleID), predicates
+	}
+	for _, rule := range rules {
+		if rule.ID != selection.RuleID {
+			continue
+		}
+		match := rule.Match
+		if match.ExactFlowID != "" {
+			predicates = append(predicates, "exact flow "+match.ExactFlowID)
+		}
+		if match.SourceCIDR != "" {
+			predicates = append(predicates, "source in "+match.SourceCIDR)
+		}
+		if match.DestinationCIDR != "" {
+			predicates = append(predicates, "destination in "+match.DestinationCIDR)
+		}
+		if match.Protocol != "" {
+			predicates = append(predicates, "protocol "+string(match.Protocol))
+		}
+		if match.SourcePorts != nil {
+			predicates = append(predicates, "source ports "+managementPortRange(*match.SourcePorts))
+		}
+		if match.DestinationPorts != nil {
+			predicates = append(predicates, "destination ports "+managementPortRange(*match.DestinationPorts))
+		}
+		if match.WireSize != nil {
+			predicates = append(predicates, fmt.Sprintf("wire size %d-%d bytes", match.WireSize.Minimum, match.WireSize.Maximum))
+		}
+		if len(match.RequiredTCPFlags) > 0 {
+			flags := make([]string, len(match.RequiredTCPFlags))
+			for index, flag := range match.RequiredTCPFlags {
+				flags[index] = string(flag)
+			}
+			predicates = append(predicates, "TCP flags "+strings.Join(flags, "+"))
+		}
+		return rule.Name, fmt.Sprintf("%s rule %s matched every configured predicate", selection.Tier, selection.RuleID), predicates
+	}
+	return "", fmt.Sprintf("%s rule %s matched the latest packet", selection.Tier, selection.RuleID), predicates
+}
+
+func managementPortRange(value config.PortRangeConfig) string {
+	if value.Minimum == value.Maximum {
+		return fmt.Sprintf("%d", value.Minimum)
+	}
+	return fmt.Sprintf("%d-%d", value.Minimum, value.Maximum)
 }
 
 func managementFlowOverlay(overlay flow.Overlay) managementapi.FlowOverlay {

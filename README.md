@@ -16,8 +16,11 @@ React/TypeScript foundation and first setup-assistant slice are implemented;
 the first bounded flow explorer now supports live search, sorting, selection,
 observed rates, authoritative rule/musical annotations, and temporary mute/solo
 control. Exact-flow pinning and generalized protocol/destination-service rule
-creation are implemented with optimistic revisions. Detailed explanations and
-the full ordered rule editor are next.
+creation are implemented with optimistic revisions. Every flow exposes a
+backend-authored decision explanation, and `/rules` provides revision-guarded
+ordering, editing, duplication, deletion, shadow warnings, current match counts,
+and atomic import/export. Completing the setup assistant and its durable
+pending-configuration path is next.
 
 ## Commands
 

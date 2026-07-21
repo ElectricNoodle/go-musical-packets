@@ -31,6 +31,7 @@ type stubBackend struct {
 	panicMIDIFunc    func(context.Context) error
 	rulesFunc        func(context.Context) (RulesDocument, error)
 	createRuleFunc   func(context.Context, Revision, config.RuleConfig) (RulesDocument, error)
+	replaceRulesFunc func(context.Context, Revision, config.RulesConfig) (RulesDocument, error)
 	replaceRuleFunc  func(context.Context, Revision, string, config.RuleConfig) (RulesDocument, error)
 	deleteRuleFunc   func(context.Context, Revision, string) (RulesDocument, error)
 	reorderRulesFunc func(context.Context, Revision, []string) (RulesDocument, error)
@@ -107,6 +108,13 @@ func (backend *stubBackend) CreateRule(ctx context.Context, expected Revision, r
 		return backend.createRuleFunc(ctx, expected, rule)
 	}
 	return RulesDocument{Revision: testRevisionB, Writable: true, Rules: config.RulesConfig{rule}}, nil
+}
+
+func (backend *stubBackend) ReplaceRules(ctx context.Context, expected Revision, rules config.RulesConfig) (RulesDocument, error) {
+	if backend.replaceRulesFunc != nil {
+		return backend.replaceRulesFunc(ctx, expected, rules)
+	}
+	return RulesDocument{Revision: testRevisionB, Writable: true, Rules: rules}, nil
 }
 
 func (backend *stubBackend) ReplaceRule(ctx context.Context, expected Revision, id string, rule config.RuleConfig) (RulesDocument, error) {

@@ -41,6 +41,19 @@ func (backend *managementBackend) CreateRule(ctx context.Context, expected manag
 	})
 }
 
+// ReplaceRules atomically replaces the complete ordered persistent rule set.
+func (backend *managementBackend) ReplaceRules(ctx context.Context, expected managementapi.Revision, rules config.RulesConfig) (managementapi.RulesDocument, error) {
+	rulesWasNil := rules == nil
+	rules = (config.Config{Rules: rules}).Clone().Rules
+	return backend.mutateRules(ctx, expected, func(candidate *config.Config) error {
+		if rulesWasNil {
+			return managementRuleInvalid("invalid_rule", errors.New("rules must be an array"))
+		}
+		candidate.Rules = rules
+		return validateManagementRules(candidate)
+	})
+}
+
 // ReplaceRule replaces a rule in place, preserving the order of all rules.
 func (backend *managementBackend) ReplaceRule(ctx context.Context, expected managementapi.Revision, id string, rule config.RuleConfig) (managementapi.RulesDocument, error) {
 	rule = cloneManagementRule(rule)

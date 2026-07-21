@@ -192,6 +192,8 @@ POST   /api/v1/midi/panic
 GET    /api/v1/flows
 GET    /api/v1/rules
 POST   /api/v1/rules
+PUT    /api/v1/rules
+PATCH  /api/v1/rules
 PUT    /api/v1/rules/{id}
 DELETE /api/v1/rules/{id}
 POST   /api/v1/flows/solo
@@ -326,8 +328,10 @@ Stages 1 through 10 are implemented. Stage 11 is underway: frontend
 foundations, the first setup-assistant slice, and the bounded flow table with
 temporary mute/solo controls, observed rates, and authoritative rule/musical
 annotations are implemented. Exact-flow pinning and constrained generalized
-rule creation are also implemented. Detailed match explanations and the full
-ordered rule editor are the current frontier.
+rule creation are also implemented. Backend-authored match explanations and the
+complete revision-guarded ordered rule workspace are implemented. Completing
+the setup assistant, including a pending-configuration transaction for
+restart-required changes, is the current stage-11 frontier.
 
 1. Architecture record and exact behavioral specification.
 2. Go foundations, config, logging, lifecycle, build metadata, and CI.

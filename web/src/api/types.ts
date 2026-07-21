@@ -138,6 +138,9 @@ export interface FlowSnapshot {
   channel: number
   rule_id?: string
   rule_tier: string
+  rule_name?: string
+  decision_reason: string
+  matched_predicates: string[]
   mode: string
   root: number
 }

@@ -54,9 +54,10 @@ the YAML file manually requires a later stage-11 pending-configuration
 transaction that can persist a validated generation for the next restart.
 
 Frontend tests use Vitest, jsdom, and Testing Library. They cover YAML/ETag
-transport, live-safe validation and apply, restart classification, and MIDI
-panic. The UI uses semantic controls, keyboard-visible focus, non-color status
-cues, responsive layouts, and reduced-motion behavior.
+transport, live-safe validation and apply, restart classification, MIDI panic,
+flow explanations, and ordered rule mutations. The UI uses semantic controls,
+keyboard-visible focus, non-color status cues, responsive layouts, and
+reduced-motion behavior.
 
 ## Flow explorer
 
@@ -75,10 +76,11 @@ management API. Selected flows can be muted as a group or used as the complete
 solo set, and every row also provides toggles.
 
 Each row shows the backend-evaluated play, monitor, or ignore state; effective
-channel; precedence tier and controlling rule ID; and deterministic root/mode
-identity. The backend evaluates the latest normalized event for every flow
-against one atomic policy generation, so the browser never reimplements rule
-precedence.
+channel; precedence tier and controlling rule name; and deterministic root/mode
+identity. An expandable explanation includes the backend-authored decision
+reason and every configured predicate that matched. The backend evaluates the
+latest normalized event for every flow against one atomic policy generation,
+so the browser never reimplements rule precedence or match semantics.
 
 One selected flow or any table row can open persistent rule creation. The
 available scopes are an exact-flow pin, the entire observed protocol, or the
@@ -90,5 +92,23 @@ revision race. A successful creation refreshes both live annotations and the
 application's configuration snapshot so later setup edits cannot overwrite a
 new rule from stale state.
 
-A full per-predicate match explanation and the complete ordered rule editor are
-the remaining stage-11 frontend work.
+## Ordered rule workspace
+
+The `/rules` workspace loads the isolated rules resource and retained flows in
+parallel. It shows pinned and broad tiers explicitly, authoritative counts of
+currently retained flows controlled by each rule, and conservative warnings
+for obvious earlier-rule shadowing. Users can reorder with buttons or
+Alt+Arrow keys, enable or disable, edit, duplicate, and delete with a two-step
+confirmation. The match editor accepts the complete management rule schema as
+JSON rather than maintaining a second partial rule model in the browser.
+
+Every mutation sends the currently displayed strong ETag. A 412 reloads the
+winning collection and asks the user to review instead of blindly replaying the
+operation. Full collection import uses one atomic `PUT`; export contains only
+the portable ordered rule array. Edit dialogs warn before discarding unsaved
+work and protect dirty forms from accidental navigation. Read-only runtimes
+remain inspectable and exportable while all write controls are disabled.
+
+Completing the setup assistant, including a pending-configuration transaction
+for validated restart-required changes, is the remaining stage-11 frontend
+work.

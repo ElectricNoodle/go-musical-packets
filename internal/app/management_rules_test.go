@@ -56,15 +56,25 @@ func TestManagementRulesCRUDPreservesOrderSecretsAndPublicRevision(t *testing.T)
 		t.Fatal("CreateRule() preserved revision")
 	}
 
+	replacedCollection, err := backend.ReplaceRules(context.Background(), created.Revision, config.RulesConfig{
+		managementTestRule("second", config.FlowPlay, 2),
+		managementTestRule("first", config.FlowMonitor, 0),
+		managementTestRule("third", config.FlowIgnore, 0),
+	})
+	if err != nil {
+		t.Fatalf("ReplaceRules() error = %v", err)
+	}
+	assertManagementRuleIDs(t, replacedCollection.Rules, "second", "first", "third")
+
 	replacement := managementTestRule("second", config.FlowPlay, 9)
 	replacement.Name = "replacement"
-	replaced, err := backend.ReplaceRule(context.Background(), created.Revision, "second", replacement)
+	replaced, err := backend.ReplaceRule(context.Background(), replacedCollection.Revision, "second", replacement)
 	if err != nil {
 		t.Fatalf("ReplaceRule() error = %v", err)
 	}
-	assertManagementRuleIDs(t, replaced.Rules, "first", "second", "third")
-	if replaced.Rules[1].Name != "replacement" || replaced.Rules[1].Action.Channel != 9 {
-		t.Fatalf("ReplaceRule() rule = %#v", replaced.Rules[1])
+	assertManagementRuleIDs(t, replaced.Rules, "second", "first", "third")
+	if replaced.Rules[0].Name != "replacement" || replaced.Rules[0].Action.Channel != 9 {
+		t.Fatalf("ReplaceRule() rule = %#v", replaced.Rules[0])
 	}
 
 	reordered, err := backend.ReorderRules(
@@ -102,6 +112,19 @@ func TestManagementRulesCRUDPreservesOrderSecretsAndPublicRevision(t *testing.T)
 	assertManagementRuleIDs(t, durable.Config.Rules, "third", "second")
 	if durable.Config.Mapping.Seed != configuration.Mapping.Seed || durable.Config.Peer.URL != configuration.Peer.URL {
 		t.Fatalf("rule CRUD changed secrets: seed %q peer %q", durable.Config.Mapping.Seed, durable.Config.Peer.URL)
+	}
+}
+
+func TestManagementRulesReplaceRejectsMissingArray(t *testing.T) {
+	configuration := managementTestConfig()
+	controller := mustController(t, configuration, nil, nil)
+	backend := readyManagementRuleBackend(controller, context.Background())
+	before := controller.Current()
+
+	_, err := backend.ReplaceRules(context.Background(), backend.revisions.issue(before.Revision), nil)
+	assertManagementBackendError(t, err, managementapi.ErrorInvalid, "invalid_rule")
+	if after := controller.Current(); !reflect.DeepEqual(after.Config.Rules, before.Config.Rules) || after.Revision != before.Revision {
+		t.Fatalf("ReplaceRules(nil) changed document: got %#v, want %#v", after, before)
 	}
 }
 

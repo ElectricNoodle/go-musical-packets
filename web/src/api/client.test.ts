@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createManagementClient } from './client'
 import { configuration } from '../test/fixtures'
+import type { RuleConfig } from './types'
 
 describe('management client', () => {
   it('decodes YAML configuration and preserves the strong revision', async () => {
@@ -96,6 +97,41 @@ describe('management client', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'If-Match': '"rules-a"' },
       body: JSON.stringify(rule),
+    }))
+  })
+
+  it('sends every ordered-rule mutation with the exact revision', async () => {
+    const rule: RuleConfig = {
+      id: '.', name: 'Dot', enabled: true,
+      match: { protocol: 'tcp' },
+      action: { state: 'monitor', channel: 0 },
+    }
+    const response = () => new Response(JSON.stringify({ revision: 'rules-b', writable: true, rules: [rule] }), {
+      status: 200, headers: { ETag: '"rules-b"', 'Content-Type': 'application/json' },
+    })
+    const fetcher = vi.fn()
+      .mockImplementationOnce(async () => response())
+      .mockImplementationOnce(async () => response())
+      .mockImplementationOnce(async () => response())
+      .mockImplementationOnce(async () => response())
+    const client = createManagementClient(fetcher)
+
+    await client.replaceRules([rule], '"rules-a"')
+    await client.replaceRule('.', rule, '"rules-b"')
+    await client.deleteRule('..', '"rules-c"')
+    await client.reorderRules(['.'], '"rules-d"')
+
+    expect(fetcher).toHaveBeenNthCalledWith(1, '/api/v1/rules', expect.objectContaining({
+      method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': '"rules-a"' }, body: JSON.stringify({ rules: [rule] }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/v1/rules/%2E', expect.objectContaining({
+      method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': '"rules-b"' }, body: JSON.stringify(rule),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/v1/rules/%2E%2E', expect.objectContaining({
+      method: 'DELETE', headers: { 'If-Match': '"rules-c"' },
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/v1/rules', expect.objectContaining({
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', 'If-Match': '"rules-d"' }, body: JSON.stringify({ order: ['.'] }),
     }))
   })
 })

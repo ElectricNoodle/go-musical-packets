@@ -14,7 +14,14 @@ describe('flow explorer', () => {
     expect(client.getFlows).toHaveBeenCalledWith(500, expect.any(AbortSignal))
     expect(screen.getByText(/D dorian/i)).toBeInTheDocument()
     expect(screen.getByText('Channel 4')).toBeInTheDocument()
-    expect(screen.getByText('user · web-traffic')).toBeInTheDocument()
+    expect(screen.getByText('Web traffic')).toBeInTheDocument()
+    const webFlowRow = screen.getByText('0123456789abcdef01234567').closest('tr')
+    expect(webFlowRow).not.toBeNull()
+    if (!webFlowRow) throw new Error('expected the web flow row')
+    await user.click(within(webFlowRow).getByText('Why?'))
+    expect(within(webFlowRow).getByText(/matched every configured predicate/i)).toBeInTheDocument()
+    expect(within(webFlowRow).getByText('protocol tcp')).toBeInTheDocument()
+    expect(within(webFlowRow).getByText('destination ports 443')).toBeInTheDocument()
 
     await user.type(screen.getByRole('searchbox', { name: /search flows/i }), '5353')
 

@@ -4,6 +4,7 @@ import type { RuntimeSnapshot } from './api/types'
 import { SetupAssistant } from './components/SetupAssistant'
 import { StatusRail } from './components/StatusRail'
 import { FlowExplorer } from './components/FlowExplorer'
+import { RulesEditor } from './components/RulesEditor'
 
 interface Notice {
   message: string
@@ -14,9 +15,10 @@ interface AppProps {
   client?: ManagementClient
 }
 
-type View = 'setup' | 'flows'
+type View = 'setup' | 'flows' | 'rules'
 
 function viewFromPath(pathname: string): View {
+  if (pathname === '/rules' || pathname.startsWith('/rules/')) return 'rules'
   return pathname === '/flows' || pathname.startsWith('/flows/') ? 'flows' : 'setup'
 }
 
@@ -59,7 +61,7 @@ export default function App({ client: suppliedClient }: AppProps) {
   const navigate = (event: MouseEvent<HTMLAnchorElement>, next: View) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault()
-    const path = next === 'flows' ? '/flows' : '/setup'
+    const path = next === 'flows' ? '/flows' : next === 'rules' ? '/rules' : '/setup'
     if (window.location.pathname !== path) window.history.pushState(null, '', path)
     setView(next)
   }
@@ -112,6 +114,7 @@ export default function App({ client: suppliedClient }: AppProps) {
         <nav className="primary-nav" aria-label="Primary navigation">
           <a href="/setup" aria-current={view === 'setup' ? 'page' : undefined} onClick={(event) => navigate(event, 'setup')}>Setup</a>
           <a href="/flows" aria-current={view === 'flows' ? 'page' : undefined} onClick={(event) => navigate(event, 'flows')}>Flows</a>
+          <a href="/rules" aria-current={view === 'rules' ? 'page' : undefined} onClick={(event) => navigate(event, 'rules')}>Rules</a>
         </nav>
         <div className="topbar__meta">
           <span className="live-dot" aria-hidden="true" />
@@ -123,9 +126,9 @@ export default function App({ client: suppliedClient }: AppProps) {
       <StatusRail snapshot={snapshot} onPanic={panic} busy={panicBusy} />
       <main className="workspace">
         {snapshot.status.warning && <div className="warning-banner" role="status">{snapshot.status.warning}</div>}
-        {view === 'setup'
-          ? <SetupAssistant key={snapshot.config.revision} client={client} snapshot={snapshot} onApplied={() => load()} announce={announce} />
-          : <FlowExplorer client={client} announce={announce} onPolicyChanged={() => load()} />}
+        {view === 'setup' && <SetupAssistant key={snapshot.config.revision} client={client} snapshot={snapshot} onApplied={() => load()} announce={announce} />}
+        {view === 'flows' && <FlowExplorer client={client} announce={announce} onPolicyChanged={() => load()} />}
+        {view === 'rules' && <RulesEditor client={client} announce={announce} onPolicyChanged={() => load()} />}
       </main>
 
       {notice && (

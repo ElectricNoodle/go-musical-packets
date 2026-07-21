@@ -33,6 +33,7 @@ POST /api/v1/flows/mute
 POST /api/v1/flows/solo
 GET    /api/v1/rules
 POST   /api/v1/rules
+PUT    /api/v1/rules
 PATCH  /api/v1/rules
 PUT    /api/v1/rules/{id}
 DELETE /api/v1/rules/{id}
@@ -161,8 +162,16 @@ as full config writes, and return the updated collection and resulting `ETag`.
 
 `POST /api/v1/rules` appends one rule object and returns 201 with its encoded item
 URL in `Location`. `PUT /api/v1/rules/{id}` replaces a rule in place; the body ID
-must exactly match the decoded path ID. `DELETE` removes that item. `PATCH
-/api/v1/rules` accepts a complete, duplicate-free permutation:
+must exactly match the decoded path ID. `DELETE` removes that item. `PUT
+/api/v1/rules` atomically replaces the complete collection and requires an
+explicit array wrapper:
+
+```json
+{"rules":[{"id":"broad-web","name":"Web","enabled":true,"match":{"protocol":"tcp"},"action":{"state":"play","channel":4}}]}
+```
+
+An explicit empty array clears the collection; a missing or null array is
+invalid. `PATCH /api/v1/rules` accepts a complete, duplicate-free permutation:
 
 ```json
 {"order":["exact-dns","broad-web"]}
@@ -193,11 +202,13 @@ precedence within each tier, not between those tiers.
 stable ID, canonical endpoints, protocol, first and last observation times,
 packet and byte counters, directional packet counters, and current mute/solo
 flags. Every flow also includes its effective `state`, user-facing `channel`,
-`rule_tier`, optional `rule_id`, deterministic `mode`, and numeric root pitch
-class. `latest_source` and `latest_destination` expose the direction of the
-newest retained metadata event so a client can construct directional rules
-without interpreting canonical endpoint order as packet direction. The default
-limit is 500 and `?limit=N` accepts 1 through 5000. The
+`rule_tier`, optional `rule_id` and `rule_name`, a backend-authored
+`decision_reason`, the complete `matched_predicates` list, deterministic `mode`,
+and numeric root pitch class. Empty predicate lists are encoded as `[]`.
+`latest_source` and `latest_destination` expose the direction of the newest
+retained metadata event so a client can construct directional rules without
+interpreting canonical endpoint order as packet direction. The default limit
+is 500 and `?limit=N` accepts 1 through 5000. The
 response also reports the registry total, whether the result is truncated, and
 the complete temporary overlay.
 

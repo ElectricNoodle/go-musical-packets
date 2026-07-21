@@ -79,6 +79,8 @@ func TestManagementBackendFlowsPagesAndConvertsSnapshots(t *testing.T) {
 	}
 	if gotFirst.State != string(flow.StateIgnore) || gotFirst.Channel != configuration.Mapping.DefaultChannel ||
 		gotFirst.RuleID != "" || gotFirst.RuleTier != "temporary_mute" ||
+		gotFirst.RuleName != "" || gotFirst.DecisionReason != "the flow is in the temporary mute set" ||
+		gotFirst.MatchedPredicates == nil || len(gotFirst.MatchedPredicates) != 0 ||
 		gotFirst.Mode != identity.Mode.String() || gotFirst.Root != identity.Root {
 		t.Fatalf("converted first flow annotations = %#v, want current mute decision and identity %#v", gotFirst, identity)
 	}
@@ -134,7 +136,9 @@ func TestManagementBackendFlowAnnotationsUseLatestEventAndCurrentPolicy(t *testi
 		t.Fatalf("Flows(forward) error = %v", err)
 	}
 	got := page.Flows[0]
-	if got.ID != observed.Flow.ID || got.State != string(flow.StatePlay) || got.Channel != 9 || got.RuleID != "https-destination" || got.RuleTier != "user" {
+	if got.ID != observed.Flow.ID || got.State != string(flow.StatePlay) || got.Channel != 9 || got.RuleID != "https-destination" || got.RuleTier != "user" ||
+		got.RuleName != "HTTPS destination" || got.DecisionReason != "user rule https-destination matched every configured predicate" ||
+		!reflect.DeepEqual(got.MatchedPredicates, []string{"destination ports 443"}) {
 		t.Fatalf("forward annotations = %#v, want matching user rule", got)
 	}
 
@@ -149,7 +153,8 @@ func TestManagementBackendFlowAnnotationsUseLatestEventAndCurrentPolicy(t *testi
 		t.Fatalf("Flows(reverse) error = %v", err)
 	}
 	got = page.Flows[0]
-	if got.State != string(flow.StateMonitor) || got.Channel != configuration.Mapping.DefaultChannel || got.RuleID != "" || got.RuleTier != "default" {
+	if got.State != string(flow.StateMonitor) || got.Channel != configuration.Mapping.DefaultChannel || got.RuleID != "" || got.RuleTier != "default" ||
+		got.DecisionReason != "no higher-precedence rule matched the latest packet" || got.MatchedPredicates == nil || len(got.MatchedPredicates) != 0 {
 		t.Fatalf("reverse annotations = %#v, want current default decision", got)
 	}
 
@@ -160,7 +165,8 @@ func TestManagementBackendFlowAnnotationsUseLatestEventAndCurrentPolicy(t *testi
 	if err != nil {
 		t.Fatalf("Flows(muted) error = %v", err)
 	}
-	if got = page.Flows[0]; got.State != string(flow.StateIgnore) || got.RuleTier != "temporary_mute" || !got.Muted {
+	if got = page.Flows[0]; got.State != string(flow.StateIgnore) || got.RuleTier != "temporary_mute" || !got.Muted ||
+		got.DecisionReason != "the flow is in the temporary mute set" || got.MatchedPredicates == nil || len(got.MatchedPredicates) != 0 {
 		t.Fatalf("muted annotations = %#v, want current temporary mute decision", got)
 	}
 }

@@ -38,6 +38,8 @@ func TestFlowsGetAndHead(t *testing.T) {
 			Channel:           7,
 			RuleID:            "temporary-rule",
 			RuleTier:          "temporary_mute",
+			DecisionReason:    "the flow is in the temporary mute set",
+			MatchedPredicates: []string{},
 			Mode:              "dorian",
 			Root:              2,
 		}},
