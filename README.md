@@ -8,11 +8,11 @@ The accepted architecture and delivery plan is in [docs/PLAN.md](docs/PLAN.md).
 
 ## Development status
 
-Delivery stages 1 through 9 are implemented. Stage 10 is underway: the
-transactional configuration core and local config/flow/rule management endpoints
-are implemented, including optimistic revisions, atomic runtime policy swaps,
-rollback, bounded flow snapshots, temporary mute/solo controls, and ordered
-rule mutations. MIDI management is next.
+Delivery stages 1 through 10 are implemented. The local management API includes
+transactional configuration, capture-interface and MIDI discovery, MIDI
+audition and panic, bounded flow snapshots, temporary mute/solo controls, and
+ordered persistent-rule mutations. Stage 11 is next: frontend foundations, the
+setup assistant, and the flow explorer.
 
 ## Commands
 

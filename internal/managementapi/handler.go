@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ElectricNoodle/go-musical-packets/internal/config"
 )
@@ -56,6 +57,10 @@ type Backend interface {
 	Config(context.Context) (ConfigDocument, error)
 	ValidateConfig(context.Context, config.Config) (Validation, error)
 	UpdateConfig(context.Context, Revision, config.Config) (ConfigDocument, error)
+	Interfaces(context.Context) (InterfacesDocument, error)
+	MIDIDevices(context.Context) (MIDIDevicesDocument, error)
+	AuditionMIDI(context.Context, MIDIAuditionRequest) error
+	PanicMIDI(context.Context) error
 	Rules(context.Context) (RulesDocument, error)
 	CreateRule(context.Context, Revision, config.RuleConfig) (RulesDocument, error)
 	ReplaceRule(context.Context, Revision, string, config.RuleConfig) (RulesDocument, error)
@@ -74,6 +79,7 @@ const (
 	ErrorPreconditionFailed ErrorKind = "precondition_failed"
 	ErrorConflict           ErrorKind = "conflict"
 	ErrorNotFound           ErrorKind = "not_found"
+	ErrorRateLimited        ErrorKind = "rate_limited"
 	ErrorUnavailable        ErrorKind = "unavailable"
 )
 
@@ -116,6 +122,7 @@ func (backendError *BackendError) Unwrap() error {
 // Options binds request authority checks to the actual listener port.
 type Options struct {
 	AllowedPort uint16
+	Observer    Observer
 }
 
 // NewHandler constructs the local-only management API.
@@ -126,7 +133,11 @@ func NewHandler(backend Backend, options Options) (http.Handler, error) {
 	if options.AllowedPort == 0 {
 		return nil, errors.New("management API allowed port is required")
 	}
-	return &handler{backend: backend, allowedPort: options.AllowedPort}, nil
+	observer := options.Observer
+	if observer == nil || nilObserver(observer) {
+		observer = noopObserver{}
+	}
+	return &handler{backend: backend, allowedPort: options.AllowedPort, observer: observer}, nil
 }
 
 func nilBackend(backend Backend) bool {
@@ -139,12 +150,38 @@ func nilBackend(backend Backend) bool {
 	}
 }
 
+func nilObserver(observer Observer) bool {
+	value := reflect.ValueOf(observer)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
 type handler struct {
 	backend     Backend
 	allowedPort uint16
+	observer    Observer
 }
 
 func (handler *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	started := time.Now()
+	observedResponse := &responseObserver{ResponseWriter: response}
+	route := normalizedManagementRoute(request.URL.EscapedPath())
+	method := normalizedManagementMethod(request.Method)
+	defer func() {
+		status := observedResponse.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		handler.observer.Request(route, method, managementRequestResult(status), time.Since(started))
+		if route == "/api/v1/config" && method == http.MethodPut {
+			handler.observer.ConfigUpdate(configUpdateResult(status))
+		}
+	}()
+	response = observedResponse
 	setResponseSecurityHeaders(response.Header())
 	if !localRequest(request, handler.allowedPort) {
 		writeProblem(response, request, http.StatusForbidden, "forbidden", "management API requests must use a matching local origin", nil)
@@ -174,6 +211,14 @@ func (handler *handler) ServeHTTP(response http.ResponseWriter, request *http.Re
 			return
 		}
 		handler.validateConfig(response, request)
+	case interfacesPath:
+		handler.serveInterfaces(response, request)
+	case midiDevicesPath:
+		handler.serveMIDIDevices(response, request)
+	case midiAuditionPath:
+		handler.serveMIDIAudition(response, request)
+	case midiPanicPath:
+		handler.serveMIDIPanic(response, request)
 	case rulesCollectionPath:
 		handler.serveRulesCollection(response, request)
 	case "/api/v1/flows":
@@ -388,6 +433,10 @@ func writeBackendError(response http.ResponseWriter, request *http.Request, err 
 		status = http.StatusNotFound
 		defaultCode = "not_found"
 		defaultDetail = "the requested management resource was not found"
+	case ErrorRateLimited:
+		status = http.StatusTooManyRequests
+		defaultCode = "rate_limited"
+		defaultDetail = "the management operation was limited for runtime safety"
 	case ErrorUnavailable:
 		status = http.StatusServiceUnavailable
 		defaultCode = "unavailable"

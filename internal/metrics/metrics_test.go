@@ -78,6 +78,53 @@ func TestMIDIObserverExportsLifecycleAndSchedulerMetrics(t *testing.T) {
 	assertMetricValue(t, observer.activeTotal, 3)
 }
 
+func TestManagementObserverExportsRequestAndUpdateMetrics(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	observer, err := NewManagementObserver("musical_packets", registry)
+	if err != nil {
+		t.Fatalf("NewManagementObserver() error = %v", err)
+	}
+	observer.Request("/api/v1/config", "PUT", "success", 2*time.Millisecond)
+	observer.ConfigUpdate("success")
+
+	assertMetricValue(t, observer.requests.WithLabelValues("/api/v1/config", "PUT", "success"), 1)
+	assertMetricValue(t, observer.configUpdates.WithLabelValues("success"), 1)
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+	foundDuration := false
+	for _, family := range families {
+		if family.GetName() == "musical_packets_management_api_request_duration_seconds" {
+			foundDuration = true
+			break
+		}
+	}
+	if !foundDuration {
+		t.Fatal("management request duration histogram was not exported")
+	}
+}
+
+func TestNewManagementObserverRejectsDuplicateRegistration(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	if _, err := NewManagementObserver("musical_packets", registry); err != nil {
+		t.Fatalf("first NewManagementObserver() error = %v", err)
+	}
+	if _, err := NewManagementObserver("musical_packets", registry); err == nil {
+		t.Fatal("duplicate NewManagementObserver() error = nil")
+	}
+}
+
+func TestBundleIncludesManagementObserver(t *testing.T) {
+	bundle, err := New("musical_packets")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if bundle.Registry == nil || bundle.Pipeline == nil || bundle.MIDI == nil || bundle.Management == nil {
+		t.Fatalf("New() returned incomplete bundle: %#v", bundle)
+	}
+}
+
 func assertMetricValue(t *testing.T, collector prometheus.Collector, want float64) {
 	t.Helper()
 	if got := testutil.ToFloat64(collector); got != want {

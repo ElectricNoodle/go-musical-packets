@@ -322,11 +322,11 @@ Pure domain packages do not depend directly on Prometheus.
 
 ## Delivery stages
 
-Stages 1 through 9 are implemented. The current implementation frontier is
-stage 10, the management API and transactional configuration.
+Stages 1 through 10 are implemented. The current implementation frontier is
+stage 11, frontend foundations, the setup assistant, and the flow explorer.
 
 1. Architecture record and exact behavioral specification.
-2. Go/frontend foundations, config, logging, lifecycle, build metadata, and CI.
+2. Go foundations, config, logging, lifecycle, build metadata, and CI.
 3. macOS/Debian live capture and MIDI technical spike.
 4. Pure musical mapper.
 5. Flow registry, rule engine, and feedback exclusions.
@@ -335,7 +335,7 @@ stage 10, the management API and transactional configuration.
 8. MIDI discovery, scheduler, channels, hot-plug recovery, and metrics.
 9. Standalone composition.
 10. Management API and transactional configuration.
-11. Setup assistant and flow explorer.
+11. Frontend foundations, setup assistant, and flow explorer.
 12. Piano roll and musical viewer.
 13. Peer WebSocket protocol with channel preservation.
 14. Host/edge composition.

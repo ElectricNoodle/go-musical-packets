@@ -185,6 +185,10 @@ func parseSingleNonNegativeQuery(values []string, name string, defaultValue int)
 }
 
 func decodeJSONRequest(response http.ResponseWriter, request *http.Request, target any) bool {
+	return decodeJSONRequestLimit(response, request, target, config.MaximumBytes)
+}
+
+func decodeJSONRequestLimit(response http.ResponseWriter, request *http.Request, target any, maximumBytes int64) bool {
 	contentEncodings := request.Header.Values("Content-Encoding")
 	if len(contentEncodings) > 1 || len(contentEncodings) == 1 && !strings.EqualFold(strings.TrimSpace(contentEncodings[0]), "identity") {
 		writeProblem(response, request, http.StatusUnsupportedMediaType, "unsupported_content_encoding", "Content-Encoding must be absent or identity", nil)
@@ -202,11 +206,11 @@ func decodeJSONRequest(response http.ResponseWriter, request *http.Request, targ
 		return false
 	}
 
-	contents, err := io.ReadAll(http.MaxBytesReader(response, request.Body, config.MaximumBytes))
+	contents, err := io.ReadAll(http.MaxBytesReader(response, request.Body, maximumBytes))
 	if err != nil {
 		var maximumBytesError *http.MaxBytesError
 		if errors.As(err, &maximumBytesError) {
-			writeProblem(response, request, http.StatusRequestEntityTooLarge, "body_too_large", fmt.Sprintf("request body exceeds %d bytes", config.MaximumBytes), nil)
+			writeProblem(response, request, http.StatusRequestEntityTooLarge, "body_too_large", fmt.Sprintf("request body exceeds %d bytes", maximumBytes), nil)
 			return false
 		}
 		writeProblem(response, request, http.StatusBadRequest, "invalid_body", "could not read the request body", nil)

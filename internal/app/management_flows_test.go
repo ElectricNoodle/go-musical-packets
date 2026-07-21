@@ -281,8 +281,23 @@ func TestNewManagementBackendRequiresFlowRegistry(t *testing.T) {
 	configuration := managementTestConfig()
 	controller := mustController(t, configuration, nil, nil)
 	var ready atomic.Bool
-	if _, err := newManagementBackend(controller, nil, &ready, context.Background()); err == nil || !strings.Contains(err.Error(), "flow registry") {
+	if _, err := newManagementBackend(controller, nil, nil, nil, &ready, context.Background()); err == nil || !strings.Contains(err.Error(), "flow registry") {
 		t.Fatalf("newManagementBackend(nil registry) error = %v, want flow registry error", err)
+	}
+}
+
+func TestNewManagementBackendRequiresInterfaceDiscovery(t *testing.T) {
+	configuration := managementTestConfig()
+	controller := mustController(t, configuration, nil, nil)
+	registry, err := flow.NewRegistry(flow.RegistryConfig{
+		Seed: configuration.Mapping.Seed, Capacity: 8, TTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	var ready atomic.Bool
+	if _, err := newManagementBackend(controller, registry, nil, nil, &ready, context.Background()); err == nil || !strings.Contains(err.Error(), "interface discovery") {
+		t.Fatalf("newManagementBackend(nil interfaces) error = %v, want interface discovery error", err)
 	}
 }
 
@@ -333,6 +348,15 @@ func TestRunServesReadOnlyFlowManagement(t *testing.T) {
 	if statusResponse.StatusCode != http.StatusOK || json.Unmarshal(statusBody, &status) != nil || status.Writable {
 		t.Fatalf("GET status = %d, %q; want read-only status", statusResponse.StatusCode, statusBody)
 	}
+	interfacesResponse := managementRequest(t, client, bound, http.MethodGet, "/api/v1/interfaces", nil, nil)
+	interfacesBody := readManagementBody(t, interfacesResponse)
+	_ = interfacesResponse.Body.Close()
+	var interfaces managementapi.InterfacesDocument
+	if interfacesResponse.StatusCode != http.StatusOK || json.Unmarshal(interfacesBody, &interfaces) != nil || interfaces.Selected == "" || len(interfaces.Interfaces) == 0 {
+		t.Fatalf("GET interfaces = %d, %q; want selected capture interface", interfacesResponse.StatusCode, interfacesBody)
+	}
+	eventuallyHTTP(t, bound, "/metrics", http.StatusOK,
+		`musical_packets_management_api_requests_total{method="GET",result="success",route="/api/v1/interfaces"} 1`)
 
 	overlay := postLiveFlowSet(t, client, bound, "/api/v1/flows/mute", []string{flowID}, http.StatusOK, nil)
 	if !reflect.DeepEqual(overlay.Muted, []string{flowID}) || overlay.Soloed == nil {

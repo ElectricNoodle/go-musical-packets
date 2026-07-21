@@ -207,26 +207,6 @@ func RunWithOptionsAndDependencies(
 	var handler http.Handler = operationalHandler
 	managementContext, cancelManagement := context.WithCancel(ctx)
 	defer cancelManagement()
-	if listenerIsLoopback(listener.Addr()) {
-		managementBackend, managementErr := newManagementBackend(controller, processing.registry, &runtimeReady, managementContext)
-		if managementErr != nil {
-			return fmt.Errorf("initialize management backend: %w", managementErr)
-		}
-		managementHandler, managementErr := managementapi.NewHandler(
-			managementBackend,
-			managementapi.Options{AllowedPort: httpPort},
-		)
-		if managementErr != nil {
-			return fmt.Errorf("initialize management API: %w", managementErr)
-		}
-		handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			if request.URL.Path == "/api/v1" || strings.HasPrefix(request.URL.Path, "/api/v1/") {
-				managementHandler.ServeHTTP(response, request)
-				return
-			}
-			operationalHandler.ServeHTTP(response, request)
-		})
-	}
 
 	var midiRuntime *midi.Runtime
 	var managerCancel context.CancelFunc
@@ -254,6 +234,43 @@ func RunWithOptionsAndDependencies(
 			managerErr := <-managerDone
 			return errors.Join(closeErr, normalizeComponentError(managerErr))
 		}
+	}
+	if listenerIsLoopback(listener.Addr()) {
+		managementBackend, managementErr := newManagementBackend(
+			controller,
+			processing.registry,
+			dependencies.Interfaces,
+			midiRuntime,
+			&runtimeReady,
+			managementContext,
+		)
+		if managementErr != nil {
+			return shutdownStartup(
+				fmt.Errorf("initialize management backend: %w", managementErr),
+				midiRuntime,
+				managerCancel,
+				managerDone,
+			)
+		}
+		managementHandler, managementErr := managementapi.NewHandler(
+			managementBackend,
+			managementapi.Options{AllowedPort: httpPort, Observer: bundle.Management},
+		)
+		if managementErr != nil {
+			return shutdownStartup(
+				fmt.Errorf("initialize management API: %w", managementErr),
+				midiRuntime,
+				managerCancel,
+				managerDone,
+			)
+		}
+		handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			if request.URL.Path == "/api/v1" || strings.HasPrefix(request.URL.Path, "/api/v1/") {
+				managementHandler.ServeHTTP(response, request)
+				return
+			}
+			operationalHandler.ServeHTTP(response, request)
+		})
 	}
 
 	var source capture.Source

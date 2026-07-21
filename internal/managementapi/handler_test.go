@@ -25,6 +25,10 @@ type stubBackend struct {
 	configFunc       func(context.Context) (ConfigDocument, error)
 	validateFunc     func(context.Context, config.Config) (Validation, error)
 	updateFunc       func(context.Context, Revision, config.Config) (ConfigDocument, error)
+	interfacesFunc   func(context.Context) (InterfacesDocument, error)
+	midiDevicesFunc  func(context.Context) (MIDIDevicesDocument, error)
+	auditionMIDIFunc func(context.Context, MIDIAuditionRequest) error
+	panicMIDIFunc    func(context.Context) error
 	rulesFunc        func(context.Context) (RulesDocument, error)
 	createRuleFunc   func(context.Context, Revision, config.RuleConfig) (RulesDocument, error)
 	replaceRuleFunc  func(context.Context, Revision, string, config.RuleConfig) (RulesDocument, error)
@@ -61,6 +65,34 @@ func (backend *stubBackend) UpdateConfig(ctx context.Context, expected Revision,
 		return backend.updateFunc(ctx, expected, configuration)
 	}
 	return ConfigDocument{Config: configuration, Revision: testRevisionB}, nil
+}
+
+func (backend *stubBackend) Interfaces(ctx context.Context) (InterfacesDocument, error) {
+	if backend.interfacesFunc != nil {
+		return backend.interfacesFunc(ctx)
+	}
+	return InterfacesDocument{Configured: "auto", Interfaces: []CaptureInterface{}}, nil
+}
+
+func (backend *stubBackend) MIDIDevices(ctx context.Context) (MIDIDevicesDocument, error) {
+	if backend.midiDevicesFunc != nil {
+		return backend.midiDevicesFunc(ctx)
+	}
+	return MIDIDevicesDocument{Discovery: MIDIDiscoveryDisabled, Devices: []MIDIDevice{}}, nil
+}
+
+func (backend *stubBackend) AuditionMIDI(ctx context.Context, request MIDIAuditionRequest) error {
+	if backend.auditionMIDIFunc != nil {
+		return backend.auditionMIDIFunc(ctx, request)
+	}
+	return nil
+}
+
+func (backend *stubBackend) PanicMIDI(ctx context.Context) error {
+	if backend.panicMIDIFunc != nil {
+		return backend.panicMIDIFunc(ctx)
+	}
+	return nil
 }
 
 func (backend *stubBackend) Rules(ctx context.Context) (RulesDocument, error) {
@@ -470,6 +502,7 @@ func TestBackendErrorMapping(t *testing.T) {
 		{name: "conflict", err: &BackendError{Kind: ErrorConflict, Code: "restart_required", Detail: "restart", Fields: []string{"capture.interface"}}, status: 409, code: "restart_required", fields: []string{"capture.interface"}},
 		{name: "conflict cause only", err: &BackendError{Kind: ErrorConflict, Err: errors.New("secret conflict cause")}, status: 409, code: "conflict"},
 		{name: "not found", err: &BackendError{Kind: ErrorNotFound, Detail: "missing"}, status: 404, code: "not_found"},
+		{name: "rate limited", err: &BackendError{Kind: ErrorRateLimited, Detail: "slow down"}, status: 429, code: "rate_limited"},
 		{name: "unavailable", err: &BackendError{Kind: ErrorUnavailable, Err: errors.New("disk failed")}, status: 503, code: "unavailable"},
 		{name: "wrapped", err: errors.Join(errors.New("outer"), &BackendError{Kind: ErrorConflict, Detail: "busy"}), status: 409, code: "conflict"},
 		{name: "generic", err: errors.New("secret backend detail"), status: 500, code: "internal_error"},

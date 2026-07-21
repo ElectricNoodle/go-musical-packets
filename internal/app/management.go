@@ -11,9 +11,12 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/ElectricNoodle/go-musical-packets/internal/capture"
 	"github.com/ElectricNoodle/go-musical-packets/internal/config"
 	"github.com/ElectricNoodle/go-musical-packets/internal/flow"
 	"github.com/ElectricNoodle/go-musical-packets/internal/managementapi"
+	"github.com/ElectricNoodle/go-musical-packets/internal/midi"
+	"github.com/ElectricNoodle/go-musical-packets/internal/music"
 )
 
 const (
@@ -24,9 +27,17 @@ const (
 type managementBackend struct {
 	controller *Controller
 	registry   *flow.Registry
+	interfaces func() ([]capture.Interface, error)
+	midi       managementMIDI
 	ready      *atomic.Bool
 	lifecycle  context.Context
 	revisions  *managementRevisionCodec
+}
+
+type managementMIDI interface {
+	Snapshot() midi.ManagerSnapshot
+	Write(context.Context, music.NoteEvent) error
+	Panic(context.Context) error
 }
 
 // managementRevisionCodec keeps exact-byte repository digests behind an
@@ -41,12 +52,22 @@ type managementRevisionCodec struct {
 	order       []managementapi.Revision
 }
 
-func newManagementBackend(controller *Controller, registry *flow.Registry, ready *atomic.Bool, lifecycle context.Context) (*managementBackend, error) {
+func newManagementBackend(
+	controller *Controller,
+	registry *flow.Registry,
+	interfaces func() ([]capture.Interface, error),
+	midiRuntime managementMIDI,
+	ready *atomic.Bool,
+	lifecycle context.Context,
+) (*managementBackend, error) {
 	if controller == nil {
 		return nil, errors.New("management controller is required")
 	}
 	if registry == nil {
 		return nil, errors.New("management flow registry is required")
+	}
+	if interfaces == nil {
+		return nil, errors.New("management capture interface discovery is required")
 	}
 	if ready == nil {
 		return nil, errors.New("management readiness is required")
@@ -58,6 +79,8 @@ func newManagementBackend(controller *Controller, registry *flow.Registry, ready
 	return &managementBackend{
 		controller: controller,
 		registry:   registry,
+		interfaces: interfaces,
+		midi:       midiRuntime,
 		ready:      ready,
 		lifecycle:  lifecycle,
 		revisions:  revisions,

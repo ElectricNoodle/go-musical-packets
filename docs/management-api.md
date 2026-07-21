@@ -1,8 +1,8 @@
 # Management API
 
 The stage-ten management API provides local status, transactional
-configuration, live-flow, and persistent-rule endpoints on the standalone HTTP
-listener.
+configuration, capture-interface and MIDI discovery, MIDI safety controls,
+live-flow, and persistent-rule endpoints on the standalone HTTP listener.
 
 ## Exposure model
 
@@ -24,6 +24,10 @@ GET  /api/v1/status
 GET  /api/v1/config
 POST /api/v1/config/validate
 PUT  /api/v1/config
+GET  /api/v1/interfaces
+GET  /api/v1/midi/devices
+POST /api/v1/midi/audition
+POST /api/v1/midi/panic
 GET  /api/v1/flows
 POST /api/v1/flows/mute
 POST /api/v1/flows/solo
@@ -66,6 +70,40 @@ current hot allowlist is:
 
 All other configuration fields require a process restart. Exact-flow rules are
 evaluated in the pinned tier ahead of broad user rules.
+
+## Capture interfaces
+
+`GET /api/v1/interfaces` performs current packet-capture device discovery. Its
+response contains the configured selector, the device to which that selector
+currently resolves when one is available, and a stable name-ordered list of
+devices. Each device includes its name, description, canonical address
+prefixes, link-up state, and loopback state. An empty `selected` value means the
+configured explicit device is absent or automatic selection found no up,
+addressed, non-loopback device. Discovery remains available when capture is
+disabled so the setup assistant can present valid choices.
+
+The route accepts GET and HEAD without query parameters. Native discovery
+failures return 503 without exposing driver details.
+
+## MIDI management
+
+`GET /api/v1/midi/devices` returns the runtime's cached discovery snapshot. It
+does not enumerate the native driver on the request goroutine. The response
+distinguishes disabled, successful, and failed discovery; a failed discovery
+may accompany a still-connected current output. Device numbers are volatile
+and are not durable identities.
+
+`POST /api/v1/midi/audition` accepts strict JSON containing `channel` 1 through
+16, `note` 0 through 127, `velocity` 1 through 127, and `duration_ms` 1 through
+10000. The note passes through the same scheduler, rate, polyphony, retrigger,
+device-transition, and Note Off guarantees as packet-triggered notes. Success
+returns 202; scheduler safety limits return 429; disabled MIDI returns 409; and
+temporary output failure returns 503.
+
+`POST /api/v1/midi/panic` requires an empty, unencoded request and clears the
+local scheduler before attempting All Notes Off on all 16 channels. Success
+returns 204. Audition and panic are process-local operations and do not require
+or change the configuration revision.
 
 ## Optimistic update workflow
 
@@ -177,3 +215,18 @@ Safety exclusions still take precedence, followed by temporary mute, temporary
 solo, exact-flow pinned rules, broad user rules, and the configured default.
 Overlay writes are allowed for a read-only config runtime, but rejected while
 the application is starting, stopping, or its policy state is unhealthy.
+
+## Metrics
+
+Management instrumentation uses normalized, bounded labels. Request counts use
+route, method, and `success`, `client_error`, or `server_error` result labels;
+request latency uses route and method. Arbitrary rule IDs and unknown paths are
+collapsed to fixed route templates. Configuration PUT attempts also record one
+of `success`, `forbidden`, `precondition`, `conflict`, `invalid`, `unavailable`,
+or `error`.
+
+```text
+musical_packets_management_api_requests_total{route,method,result}
+musical_packets_management_api_request_duration_seconds{route,method}
+musical_packets_management_config_updates_total{result}
+```

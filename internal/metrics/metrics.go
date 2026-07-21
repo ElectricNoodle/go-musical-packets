@@ -12,9 +12,10 @@ import (
 
 // Bundle owns an isolated registry and its application observers.
 type Bundle struct {
-	Registry *prometheus.Registry
-	Pipeline *PipelineObserver
-	MIDI     *MIDIObserver
+	Registry   *prometheus.Registry
+	Pipeline   *PipelineObserver
+	MIDI       *MIDIObserver
+	Management *ManagementObserver
 }
 
 // New constructs an isolated registry with Go, process, and pipeline metrics.
@@ -34,7 +35,62 @@ func New(namespace string) (*Bundle, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Bundle{Registry: registry, Pipeline: observer, MIDI: midiObserver}, nil
+	managementObserver, err := NewManagementObserver(namespace, registry)
+	if err != nil {
+		return nil, err
+	}
+	return &Bundle{Registry: registry, Pipeline: observer, MIDI: midiObserver, Management: managementObserver}, nil
+}
+
+// ManagementObserver implements the management API observer contract using
+// only route, method, and result values normalized by that transport boundary.
+type ManagementObserver struct {
+	requests      *prometheus.CounterVec
+	requestTime   *prometheus.HistogramVec
+	configUpdates *prometheus.CounterVec
+}
+
+// NewManagementObserver registers bounded-cardinality management collectors.
+func NewManagementObserver(namespace string, registerer prometheus.Registerer) (*ManagementObserver, error) {
+	if registerer == nil {
+		return nil, fmt.Errorf("Prometheus registerer is required")
+	}
+	observer := &ManagementObserver{
+		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace, Name: "management_api_requests_total", Help: "Management API requests by normalized route, method, and bounded result.",
+		}, []string{"route", "method", "result"}),
+		requestTime: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace, Name: "management_api_request_duration_seconds", Help: "Management API request duration by normalized route and method.",
+			Buckets: prometheus.ExponentialBuckets(0.00001, 2, 18),
+		}, []string{"route", "method"}),
+		configUpdates: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace, Name: "management_config_updates_total", Help: "Configuration update attempts by bounded result.",
+		}, []string{"result"}),
+	}
+	collectors := []prometheus.Collector{observer.requests, observer.requestTime, observer.configUpdates}
+	registered := make([]prometheus.Collector, 0, len(collectors))
+	for _, collector := range collectors {
+		if err := registerer.Register(collector); err != nil {
+			for _, previous := range registered {
+				registerer.Unregister(previous)
+			}
+			return nil, fmt.Errorf("register management metrics: %w", err)
+		}
+		registered = append(registered, collector)
+	}
+	return observer, nil
+}
+
+// Request records one completed API request. Callers supply normalized labels.
+func (observer *ManagementObserver) Request(route, method, result string, elapsed time.Duration) {
+	observer.requests.WithLabelValues(route, method, result).Inc()
+	observer.requestTime.WithLabelValues(route, method).Observe(elapsed.Seconds())
+}
+
+// ConfigUpdate records the terminal classification of one PUT configuration
+// request.
+func (observer *ManagementObserver) ConfigUpdate(result string) {
+	observer.configUpdates.WithLabelValues(result).Inc()
 }
 
 // MIDIObserver implements the MIDI scheduler and manager observer contracts.
