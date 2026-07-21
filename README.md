@@ -11,8 +11,9 @@ The accepted architecture and delivery plan is in [docs/PLAN.md](docs/PLAN.md).
 Delivery stages 1 through 10 are implemented. The local management API includes
 transactional configuration, capture-interface and MIDI discovery, MIDI
 audition and panic, bounded flow snapshots, temporary mute/solo controls, and
-ordered persistent-rule mutations. Stage 11 is next: frontend foundations, the
-setup assistant, and the flow explorer.
+ordered persistent-rule mutations. Stage 11 is underway: the embedded
+React/TypeScript foundation and first setup-assistant slice are implemented;
+the flow explorer is next.
 
 ## Commands
 
@@ -46,3 +47,5 @@ Standalone configuration, probes, exclusions, and shutdown are documented in
 [docs/standalone.md](docs/standalone.md).
 The local transactional HTTP contract is documented in
 [docs/management-api.md](docs/management-api.md).
+Frontend development, embedding, and setup behavior are documented in
+[docs/frontend.md](docs/frontend.md).

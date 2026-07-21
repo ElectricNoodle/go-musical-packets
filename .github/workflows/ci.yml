@@ -32,6 +32,25 @@ jobs:
           go-version: "1.24.x"
           cache: true
 
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.x"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm --prefix web ci
+
+      - name: Type-check frontend
+        run: npm --prefix web run typecheck
+
+      - name: Test frontend
+        run: npm --prefix web test
+
+      - name: Build embedded frontend
+        run: npm --prefix web run build
+
       - name: Check formatting
         run: test -z "$(gofmt -l cmd internal)"
 

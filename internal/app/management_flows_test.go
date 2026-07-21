@@ -318,6 +318,10 @@ func TestRunServesReadOnlyFlowManagement(t *testing.T) {
 			listenerReady <- tracked
 			return tracked, nil
 		},
+		WebHandler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte("frontend-shell:" + request.URL.Path))
+		}),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -354,6 +358,12 @@ func TestRunServesReadOnlyFlowManagement(t *testing.T) {
 	var interfaces managementapi.InterfacesDocument
 	if interfacesResponse.StatusCode != http.StatusOK || json.Unmarshal(interfacesBody, &interfaces) != nil || interfaces.Selected == "" || len(interfaces.Interfaces) == 0 {
 		t.Fatalf("GET interfaces = %d, %q; want selected capture interface", interfacesResponse.StatusCode, interfacesBody)
+	}
+	frontendResponse := managementRequest(t, client, bound, http.MethodGet, "/setup/capture", nil, nil)
+	frontendBody := readManagementBody(t, frontendResponse)
+	_ = frontendResponse.Body.Close()
+	if frontendResponse.StatusCode != http.StatusOK || string(frontendBody) != "frontend-shell:/setup/capture" {
+		t.Fatalf("GET frontend = %d, %q; want embedded SPA handler", frontendResponse.StatusCode, frontendBody)
 	}
 	eventuallyHTTP(t, bound, "/metrics", http.StatusOK,
 		`musical_packets_management_api_requests_total{method="GET",result="success",route="/api/v1/interfaces"} 1`)

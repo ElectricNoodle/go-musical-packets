@@ -56,6 +56,9 @@ DELETE /api/v1/rules/{id}
 
 The `/api/v1` routes are mounted only on an actually loopback-bound listener;
 metrics and probes remain available on a configured non-loopback listener.
+The embedded single-page frontend is also mounted only on that loopback
+listener. Its client-side routes fall back to the application shell while
+missing static assets remain ordinary 404 responses.
 Configuration writes use strong revision preconditions and atomic persistence.
 See [management-api.md](management-api.md) for the request, security, redaction,
 and failure contracts.

@@ -21,6 +21,7 @@ import (
 	"github.com/ElectricNoodle/go-musical-packets/internal/midi"
 	"github.com/ElectricNoodle/go-musical-packets/internal/music"
 	"github.com/ElectricNoodle/go-musical-packets/internal/pipeline"
+	"github.com/ElectricNoodle/go-musical-packets/internal/webui"
 )
 
 const (
@@ -43,6 +44,7 @@ type Dependencies struct {
 	ReplayNow            func() time.Time
 	ReplayWait           func(context.Context, time.Duration) error
 	ReplayObserver       pipeline.Observer
+	WebHandler           http.Handler
 }
 
 // RunOptions selects optional standalone-runtime capabilities. Supplying a
@@ -79,6 +81,9 @@ func (dependencies Dependencies) withDefaults() Dependencies {
 	}
 	if dependencies.ReplayWait == nil {
 		dependencies.ReplayWait = waitReplayDuration
+	}
+	if dependencies.WebHandler == nil {
+		dependencies.WebHandler = webui.NewHandler()
 	}
 	return dependencies
 }
@@ -265,11 +270,16 @@ func RunWithOptionsAndDependencies(
 			)
 		}
 		handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			if request.URL.Path == "/api/v1" || strings.HasPrefix(request.URL.Path, "/api/v1/") {
+			if request.URL.Path == "/api" || strings.HasPrefix(request.URL.Path, "/api/") {
 				managementHandler.ServeHTTP(response, request)
 				return
 			}
-			operationalHandler.ServeHTTP(response, request)
+			switch request.URL.Path {
+			case "/metrics", "/healthz", "/readyz":
+				operationalHandler.ServeHTTP(response, request)
+			default:
+				dependencies.WebHandler.ServeHTTP(response, request)
+			}
 		})
 	}
 
