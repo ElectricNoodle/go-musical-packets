@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ManagementClient } from '../api/client'
 import type { FlowOverlay, FlowPage, FlowSnapshot } from '../api/types'
+import { RuleCreator } from './RuleCreator'
 
 type SortKey = 'last_seen' | 'packets' | 'bytes' | 'rate' | 'protocol' | 'endpoint'
 type SortDirection = 'ascending' | 'descending'
@@ -13,6 +14,7 @@ interface FlowRate {
 interface FlowExplorerProps {
   client: ManagementClient
   announce: (message: string, tone?: 'neutral' | 'success' | 'error') => void
+  onPolicyChanged?: () => void | Promise<void>
 }
 
 const flowLimit = 500
@@ -54,7 +56,7 @@ function applyOverlay(page: FlowPage, overlay: FlowOverlay): FlowPage {
   }
 }
 
-export function FlowExplorer({ client, announce }: FlowExplorerProps) {
+export function FlowExplorer({ client, announce, onPolicyChanged }: FlowExplorerProps) {
   const [page, setPage] = useState<FlowPage | null>(null)
   const [query, setQuery] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('last_seen')
@@ -65,6 +67,7 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
   const [rates, setRates] = useState<Map<string, FlowRate>>(() => new Map())
   const [annotationsPending, setAnnotationsPending] = useState(false)
+  const [ruleFlow, setRuleFlow] = useState<FlowSnapshot | null>(null)
   const loading = useRef(false)
   const loadQueued = useRef(false)
   const overlayGeneration = useRef(0)
@@ -213,6 +216,7 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
   }
 
   const selectedIDs = [...selected].sort()
+  const selectedFlow = selected.size === 1 ? page?.flows.find((flow) => selected.has(flow.id)) : undefined
   const allVisibleSelected = visibleFlows.length > 0 && visibleFlows.every((flow) => selected.has(flow.id))
 
   const toggleVisible = () => {
@@ -249,6 +253,7 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
           <span>{selected.size} selected</span>
           <button type="button" disabled={busy || selected.size === 0} onClick={() => void setOverlay('mute', [...new Set([...(page?.overlay.muted ?? []), ...selectedIDs])].sort())}>Mute selected</button>
           <button type="button" disabled={busy || selected.size === 0} onClick={() => void setOverlay('solo', selectedIDs)}>Solo selected</button>
+          <button type="button" disabled={busy || !selectedFlow} onClick={() => selectedFlow && setRuleFlow(selectedFlow)}>Create rule</button>
           <button type="button" disabled={busy || selected.size === 0} onClick={() => setSelected(new Set())}>Clear selection</button>
         </div>
       </div>
@@ -275,7 +280,7 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
               <th aria-sort={sortKey === 'last_seen' ? sortDirection : 'none'}><button type="button" onClick={() => changeSort('last_seen')}>Last activity</button></th>
               <th>Musical identity</th>
               <th>Decision</th>
-              <th>Temporary state</th>
+              <th>Flow actions</th>
             </tr>
           </thead>
           <tbody>
@@ -295,7 +300,7 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
                 <td><time dateTime={flow.last_seen}>{new Date(flow.last_seen).toLocaleTimeString()}</time><small>{new Date(flow.first_seen).toLocaleDateString()}</small></td>
                 <td><span className="musical-identity"><strong>{rootNames[flow.root] ?? `PC ${flow.root}`} {flow.mode}</strong><small>Channel {flow.channel}</small></span></td>
                 <td>{annotationsPending ? <span className="decision decision--pending">refreshing</span> : <><span className={`decision decision--${flow.state}`}>{flow.state}</span><small>{flow.rule_id ? `${flow.rule_tier} · ${flow.rule_id}` : flow.rule_tier}</small></>}</td>
-                <td><div className="flow-actions"><button type="button" aria-pressed={flow.muted} disabled={busy} onClick={() => toggleFlow('mute', flow)}>{flow.muted ? 'Unmute' : 'Mute'}</button><button type="button" aria-pressed={flow.soloed} disabled={busy} onClick={() => toggleFlow('solo', flow)}>{flow.soloed ? 'Unsolo' : 'Solo'}</button></div></td>
+                <td><div className="flow-actions"><button type="button" aria-pressed={flow.muted} disabled={busy} onClick={() => toggleFlow('mute', flow)}>{flow.muted ? 'Unmute' : 'Mute'}</button><button type="button" aria-pressed={flow.soloed} disabled={busy} onClick={() => toggleFlow('solo', flow)}>{flow.soloed ? 'Unsolo' : 'Solo'}</button><button type="button" disabled={busy} aria-label={`Create persistent rule for ${flow.id}`} onClick={() => setRuleFlow(flow)}>Rule</button></div></td>
               </tr>
             ))}
           </tbody>
@@ -308,6 +313,15 @@ export function FlowExplorer({ client, announce }: FlowExplorerProps) {
         <span>Showing {number.format(visibleFlows.length)} of {number.format(page?.total ?? 0)} flows{page?.truncated ? ' · registry window truncated' : ''}</span>
         <button type="button" disabled={busy || !page || (page.overlay.muted.length === 0 && page.overlay.soloed.length === 0)} onClick={() => void clearTemporaryState()}>Clear all temporary state</button>
       </footer>
+      {ruleFlow && <RuleCreator client={client} flow={ruleFlow} announce={announce} onClose={() => setRuleFlow(null)} onCreated={async () => {
+        overlayGeneration.current += 1
+        setAnnotationsPending(true)
+        try {
+          await onPolicyChanged?.()
+        } finally {
+          void load()
+        }
+      }} />}
     </section>
   )
 }

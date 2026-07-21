@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { Configuration, FlowPage, RuntimeSnapshot } from '../api/types'
+import type { Configuration, FlowPage, RulesDocument, RuntimeSnapshot } from '../api/types'
 import type { ManagementClient } from '../api/client'
 
 export const configuration: Configuration = {
@@ -43,6 +43,8 @@ export const flowPage: FlowPage = {
       id: '0123456789abcdef01234567', protocol: 'tcp',
       endpoint_a: { address: '192.0.2.10', port: 51820 },
       endpoint_b: { address: '198.51.100.20', port: 443 },
+      latest_source: { address: '192.0.2.10', port: 51820 },
+      latest_destination: { address: '198.51.100.20', port: 443 },
       first_seen: '2026-07-21T09:59:00Z', last_seen: '2026-07-21T10:00:00Z',
       packets: 240, bytes: 19200, packets_a_to_b: 140, packets_b_to_a: 100,
       muted: false, soloed: false, state: 'play', channel: 4,
@@ -52,6 +54,8 @@ export const flowPage: FlowPage = {
       id: 'fedcba9876543210fedcba98', protocol: 'udp',
       endpoint_a: { address: '2001:db8::1', port: 5353 },
       endpoint_b: { address: 'ff02::fb', port: 5353 },
+      latest_source: { address: '2001:db8::1', port: 5353 },
+      latest_destination: { address: 'ff02::fb', port: 5353 },
       first_seen: '2026-07-21T09:58:00Z', last_seen: '2026-07-21T09:59:30Z',
       packets: 12, bytes: 980, packets_a_to_b: 12, packets_b_to_a: 0,
       muted: true, soloed: false, state: 'ignore', channel: 1,
@@ -62,6 +66,13 @@ export const flowPage: FlowPage = {
   total: 2,
   limit: 500,
   truncated: false,
+}
+
+export const rulesDocument: RulesDocument = {
+  revision: 'rules-revision-a',
+  etag: '"rules-revision-a"',
+  writable: true,
+  rules: [],
 }
 
 export function stubClient(overrides: Partial<ManagementClient> = {}): ManagementClient {
@@ -77,6 +88,13 @@ export function stubClient(overrides: Partial<ManagementClient> = {}): Managemen
     getFlows: vi.fn().mockResolvedValue(flowPage),
     setMutedFlows: vi.fn().mockImplementation(async (flowIDs: string[]) => ({ muted: flowIDs, soloed: [] })),
     setSoloedFlows: vi.fn().mockImplementation(async (flowIDs: string[]) => ({ muted: [], soloed: flowIDs })),
+    getRules: vi.fn().mockResolvedValue(rulesDocument),
+    createRule: vi.fn().mockImplementation(async (rule) => ({
+      ...rulesDocument,
+      revision: 'rules-revision-b',
+      etag: '"rules-revision-b"',
+      rules: [...rulesDocument.rules, rule],
+    })),
     ...overrides,
   }
 }

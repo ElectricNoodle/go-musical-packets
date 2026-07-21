@@ -69,4 +69,33 @@ describe('management client', () => {
       body: JSON.stringify({ flow_ids: ['flow-a'] }),
     }))
   })
+
+  it('preserves the rules ETag and uses it for optimistic creation', async () => {
+    const listed = { revision: 'rules-a', writable: true, rules: [] }
+    const created = { revision: 'rules-b', writable: true, rules: [{ id: 'web' }] }
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(listed), {
+        status: 200, headers: { ETag: '"rules-a"', 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(created), {
+        status: 201, headers: { ETag: '"rules-b"', 'Content-Type': 'application/json' },
+      }))
+    const client = createManagementClient(fetcher)
+    const rule = {
+      id: 'web', name: 'Web', enabled: true,
+      match: { protocol: 'tcp' as const },
+      action: { state: 'play' as const, channel: 4 },
+    }
+
+    const document = await client.getRules()
+    const result = await client.createRule(rule, document.etag)
+
+    expect(document.etag).toBe('"rules-a"')
+    expect(result.etag).toBe('"rules-b"')
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/v1/rules', expect.objectContaining({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'If-Match': '"rules-a"' },
+      body: JSON.stringify(rule),
+    }))
+  })
 })

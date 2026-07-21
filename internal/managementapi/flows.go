@@ -38,24 +38,26 @@ type FlowEndpoint struct {
 
 // FlowSnapshot is the stable transport view of one retained flow.
 type FlowSnapshot struct {
-	ID          string       `json:"id"`
-	Protocol    string       `json:"protocol"`
-	EndpointA   FlowEndpoint `json:"endpoint_a"`
-	EndpointB   FlowEndpoint `json:"endpoint_b"`
-	FirstSeen   time.Time    `json:"first_seen"`
-	LastSeen    time.Time    `json:"last_seen"`
-	Packets     uint64       `json:"packets"`
-	Bytes       uint64       `json:"bytes"`
-	PacketsAToB uint64       `json:"packets_a_to_b"`
-	PacketsBToA uint64       `json:"packets_b_to_a"`
-	Muted       bool         `json:"muted"`
-	Soloed      bool         `json:"soloed"`
-	State       string       `json:"state"`
-	Channel     uint8        `json:"channel"`
-	RuleID      string       `json:"rule_id,omitempty"`
-	RuleTier    string       `json:"rule_tier"`
-	Mode        string       `json:"mode"`
-	Root        uint8        `json:"root"`
+	ID                string       `json:"id"`
+	Protocol          string       `json:"protocol"`
+	EndpointA         FlowEndpoint `json:"endpoint_a"`
+	EndpointB         FlowEndpoint `json:"endpoint_b"`
+	LatestSource      FlowEndpoint `json:"latest_source"`
+	LatestDestination FlowEndpoint `json:"latest_destination"`
+	FirstSeen         time.Time    `json:"first_seen"`
+	LastSeen          time.Time    `json:"last_seen"`
+	Packets           uint64       `json:"packets"`
+	Bytes             uint64       `json:"bytes"`
+	PacketsAToB       uint64       `json:"packets_a_to_b"`
+	PacketsBToA       uint64       `json:"packets_b_to_a"`
+	Muted             bool         `json:"muted"`
+	Soloed            bool         `json:"soloed"`
+	State             string       `json:"state"`
+	Channel           uint8        `json:"channel"`
+	RuleID            string       `json:"rule_id,omitempty"`
+	RuleTier          string       `json:"rule_tier"`
+	Mode              string       `json:"mode"`
+	Root              uint8        `json:"root"`
 }
 
 // FlowOverlay is the complete temporary, non-persisted mute and solo state.

@@ -78,5 +78,17 @@ Each row shows the backend-evaluated play, monitor, or ignore state; effective
 channel; precedence tier and controlling rule ID; and deterministic root/mode
 identity. The backend evaluates the latest normalized event for every flow
 against one atomic policy generation, so the browser never reimplements rule
-precedence. Pinning, generalized rule creation, and a full match explanation
-are the remaining flow-explorer work.
+precedence.
+
+One selected flow or any table row can open persistent rule creation. The
+available scopes are an exact-flow pin, the entire observed protocol, or the
+latest directional destination host/service. Users choose the durable rule ID,
+name, play/monitor/ignore action, and channel. The dialog reads the isolated
+rules resource, disables writes for a read-only runtime, submits the exact ETag
+in `If-Match`, and reloads without retrying when another session wins the
+revision race. A successful creation refreshes both live annotations and the
+application's configuration snapshot so later setup edits cannot overwrite a
+new rule from stale state.
+
+A full per-predicate match explanation and the complete ordered rule editor are
+the remaining stage-11 frontend work.

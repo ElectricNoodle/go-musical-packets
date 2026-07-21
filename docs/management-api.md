@@ -194,7 +194,10 @@ stable ID, canonical endpoints, protocol, first and last observation times,
 packet and byte counters, directional packet counters, and current mute/solo
 flags. Every flow also includes its effective `state`, user-facing `channel`,
 `rule_tier`, optional `rule_id`, deterministic `mode`, and numeric root pitch
-class. The default limit is 500 and `?limit=N` accepts 1 through 5000. The
+class. `latest_source` and `latest_destination` expose the direction of the
+newest retained metadata event so a client can construct directional rules
+without interpreting canonical endpoint order as packet direction. The default
+limit is 500 and `?limit=N` accepts 1 through 5000. The
 response also reports the registry total, whether the result is truncated, and
 the complete temporary overlay.
 
@@ -225,6 +228,12 @@ Safety exclusions still take precedence, followed by temporary mute, temporary
 solo, exact-flow pinned rules, broad user rules, and the configured default.
 Overlay writes are allowed for a read-only config runtime, but rejected while
 the application is starting, stopping, or its policy state is unhealthy.
+
+The frontend creates persistent rules through the normal rules collection,
+never through the temporary overlay routes. It first reads the collection ETag,
+then submits one exact-flow, protocol, or latest-destination-service rule with
+that exact `If-Match` value. A 412 response causes a read-only refresh and asks
+the user to review and resubmit; the client does not blindly retry a mutation.
 
 ## Metrics
 

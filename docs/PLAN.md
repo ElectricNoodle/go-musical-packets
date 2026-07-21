@@ -325,8 +325,9 @@ Pure domain packages do not depend directly on Prometheus.
 Stages 1 through 10 are implemented. Stage 11 is underway: frontend
 foundations, the first setup-assistant slice, and the bounded flow table with
 temporary mute/solo controls, observed rates, and authoritative rule/musical
-annotations are implemented. Pinning, generalized rule creation, and detailed
-match explanations are the current frontier.
+annotations are implemented. Exact-flow pinning and constrained generalized
+rule creation are also implemented. Detailed match explanations and the full
+ordered rule editor are the current frontier.
 
 1. Architecture record and exact behavioral specification.
 2. Go foundations, config, logging, lifecycle, build metadata, and CI.

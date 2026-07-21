@@ -83,4 +83,17 @@ describe('flow explorer', () => {
     expect(screen.getByText('1 kB/s')).toBeInTheDocument()
     clock.mockRestore()
   })
+
+  it('opens persistent rule creation from one selected flow', async () => {
+    const client = stubClient()
+    const user = userEvent.setup()
+    render(<FlowExplorer client={client} announce={vi.fn()} />)
+    await screen.findByText('0123456789abcdef01234567')
+
+    await user.click(screen.getByRole('checkbox', { name: /select flow 012345/i }))
+    await user.click(screen.getByRole('button', { name: /^create rule$/i }))
+
+    expect(await screen.findByRole('dialog', { name: /turn this flow into a rule/i })).toBeInTheDocument()
+    expect(client.getRules).toHaveBeenCalledOnce()
+  })
 })

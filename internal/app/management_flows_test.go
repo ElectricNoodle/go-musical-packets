@@ -87,6 +87,10 @@ func TestManagementBackendFlowsPagesAndConvertsSnapshots(t *testing.T) {
 		gotFirst.EndpointA.Port != updatedFirst.Flow.Key.A.Port ||
 		gotFirst.EndpointB.Address != updatedFirst.Flow.Key.B.Addr.String() ||
 		gotFirst.EndpointB.Port != updatedFirst.Flow.Key.B.Port ||
+		gotFirst.LatestSource.Address != reverse.Source.Addr.String() ||
+		gotFirst.LatestSource.Port != reverse.Source.Port ||
+		gotFirst.LatestDestination.Address != reverse.Destination.Addr.String() ||
+		gotFirst.LatestDestination.Port != reverse.Destination.Port ||
 		!gotFirst.FirstSeen.Equal(updatedFirst.Flow.FirstSeen) ||
 		!gotFirst.LastSeen.Equal(updatedFirst.Flow.LastSeen) {
 		t.Fatalf("converted first flow = %#v, want snapshot %#v", gotFirst, updatedFirst.Flow)

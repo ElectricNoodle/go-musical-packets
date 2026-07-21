@@ -169,6 +169,14 @@ func managementFlowSnapshot(
 			Address: snapshot.Key.B.Addr.String(),
 			Port:    snapshot.Key.B.Port,
 		},
+		LatestSource: managementapi.FlowEndpoint{
+			Address: snapshot.LastEvent.Source.Addr.String(),
+			Port:    snapshot.LastEvent.Source.Port,
+		},
+		LatestDestination: managementapi.FlowEndpoint{
+			Address: snapshot.LastEvent.Destination.Addr.String(),
+			Port:    snapshot.LastEvent.Destination.Port,
+		},
 		FirstSeen:   snapshot.FirstSeen,
 		LastSeen:    snapshot.LastSeen,
 		Packets:     snapshot.Packets,

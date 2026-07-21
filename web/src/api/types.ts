@@ -1,5 +1,6 @@
 export type FlowState = 'ignore' | 'monitor' | 'play'
 export type RuntimeRole = 'standalone' | 'edge' | 'host'
+export type PacketProtocol = 'tcp' | 'udp' | 'icmp' | 'icmp6' | 'other'
 
 export interface Status {
   state: string
@@ -92,7 +93,7 @@ export interface Configuration {
     level: 'debug' | 'info' | 'warn' | 'error'
     format: 'text' | 'json'
   }
-  rules: unknown[]
+  rules: RuleConfig[]
 }
 
 export interface ConfigDocument {
@@ -120,9 +121,11 @@ export interface FlowEndpoint {
 
 export interface FlowSnapshot {
   id: string
-  protocol: string
+  protocol: PacketProtocol
   endpoint_a: FlowEndpoint
   endpoint_b: FlowEndpoint
+  latest_source: FlowEndpoint
+  latest_destination: FlowEndpoint
   first_seen: string
   last_seen: string
   packets: number
@@ -150,6 +153,45 @@ export interface FlowPage {
   total: number
   limit: number
   truncated: boolean
+}
+
+export interface RulePortRange {
+  minimum: number
+  maximum: number
+}
+
+export interface RuleSizeRange {
+  minimum: number
+  maximum: number
+}
+
+export interface RuleMatch {
+  exact_flow_id?: string
+  source_cidr?: string
+  destination_cidr?: string
+  protocol?: PacketProtocol
+  source_ports?: RulePortRange
+  destination_ports?: RulePortRange
+  wire_size?: RuleSizeRange
+  required_tcp_flags?: Array<'fin' | 'syn' | 'rst' | 'psh' | 'ack' | 'urg'>
+}
+
+export interface RuleConfig {
+  id: string
+  name: string
+  enabled: boolean
+  match: RuleMatch
+  action: {
+    state: FlowState
+    channel: number
+  }
+}
+
+export interface RulesDocument {
+  revision: string
+  etag: string
+  writable: boolean
+  rules: RuleConfig[]
 }
 
 export interface ProblemDocument {

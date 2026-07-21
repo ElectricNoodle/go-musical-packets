@@ -15,7 +15,9 @@ ordered persistent-rule mutations. Stage 11 is underway: the embedded
 React/TypeScript foundation and first setup-assistant slice are implemented;
 the first bounded flow explorer now supports live search, sorting, selection,
 observed rates, authoritative rule/musical annotations, and temporary mute/solo
-control. Persistent pinning and generalized rule creation are next.
+control. Exact-flow pinning and generalized protocol/destination-service rule
+creation are implemented with optimistic revisions. Detailed explanations and
+the full ordered rule editor are next.
 
 ## Commands
 

@@ -7,6 +7,8 @@ import type {
   InterfacesDocument,
   MIDIDevicesDocument,
   ProblemDocument,
+  RuleConfig,
+  RulesDocument,
   Status,
   Validation,
 } from './types'
@@ -37,6 +39,8 @@ export interface ManagementClient {
   getFlows(limit?: number, signal?: AbortSignal): Promise<FlowPage>
   setMutedFlows(flowIDs: string[], signal?: AbortSignal): Promise<FlowOverlay>
   setSoloedFlows(flowIDs: string[], signal?: AbortSignal): Promise<FlowOverlay>
+  getRules(signal?: AbortSignal): Promise<RulesDocument>
+  createRule(rule: RuleConfig, revision: string, signal?: AbortSignal): Promise<RulesDocument>
 }
 
 const yamlHeaders = {
@@ -80,6 +84,15 @@ export function createManagementClient(fetcher: typeof fetch = fetch): Managemen
       config: parse(await response.text()) as Configuration,
       revision,
     }
+  }
+
+  const rulesDocument = async (response: Response): Promise<RulesDocument> => {
+    const etag = response.headers.get('ETag')
+    if (!etag) {
+      throw new Error('Rules response did not include an ETag revision.')
+    }
+    const document = await response.json() as Omit<RulesDocument, 'etag'>
+    return { ...document, etag }
   }
 
   return {
@@ -129,5 +142,12 @@ export function createManagementClient(fetcher: typeof fetch = fetch): Managemen
         body: JSON.stringify({ flow_ids: flowIDs }),
         signal,
       }),
+    getRules: async (signal) => rulesDocument(await request('/api/v1/rules', { signal })),
+    createRule: async (rule, revision, signal) => rulesDocument(await request('/api/v1/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'If-Match': revision },
+      body: JSON.stringify(rule),
+      signal,
+    })),
   }
 }

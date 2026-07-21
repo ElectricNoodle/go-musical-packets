@@ -125,7 +125,7 @@ export default function App({ client: suppliedClient }: AppProps) {
         {snapshot.status.warning && <div className="warning-banner" role="status">{snapshot.status.warning}</div>}
         {view === 'setup'
           ? <SetupAssistant key={snapshot.config.revision} client={client} snapshot={snapshot} onApplied={() => load()} announce={announce} />
-          : <FlowExplorer client={client} announce={announce} />}
+          : <FlowExplorer client={client} announce={announce} onPolicyChanged={() => load()} />}
       </main>
 
       {notice && (
