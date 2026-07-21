@@ -25,6 +25,9 @@ type stubBackend struct {
 	configFunc   func(context.Context) (ConfigDocument, error)
 	validateFunc func(context.Context, config.Config) (Validation, error)
 	updateFunc   func(context.Context, Revision, config.Config) (ConfigDocument, error)
+	flowsFunc    func(context.Context, FlowPageRequest) (FlowPage, error)
+	mutedFunc    func(context.Context, []string) (FlowOverlay, error)
+	soloedFunc   func(context.Context, []string) (FlowOverlay, error)
 }
 
 func (backend *stubBackend) Status(ctx context.Context) (Status, error) {
@@ -53,6 +56,27 @@ func (backend *stubBackend) UpdateConfig(ctx context.Context, expected Revision,
 		return backend.updateFunc(ctx, expected, configuration)
 	}
 	return ConfigDocument{Config: configuration, Revision: testRevisionB}, nil
+}
+
+func (backend *stubBackend) Flows(ctx context.Context, request FlowPageRequest) (FlowPage, error) {
+	if backend.flowsFunc != nil {
+		return backend.flowsFunc(ctx, request)
+	}
+	return FlowPage{Flows: []FlowSnapshot{}, Overlay: FlowOverlay{Muted: []string{}, Soloed: []string{}}, Limit: request.Limit}, nil
+}
+
+func (backend *stubBackend) SetMutedFlows(ctx context.Context, flowIDs []string) (FlowOverlay, error) {
+	if backend.mutedFunc != nil {
+		return backend.mutedFunc(ctx, flowIDs)
+	}
+	return FlowOverlay{Muted: append([]string(nil), flowIDs...), Soloed: []string{}}, nil
+}
+
+func (backend *stubBackend) SetSoloedFlows(ctx context.Context, flowIDs []string) (FlowOverlay, error) {
+	if backend.soloedFunc != nil {
+		return backend.soloedFunc(ctx, flowIDs)
+	}
+	return FlowOverlay{Muted: []string{}, Soloed: append([]string(nil), flowIDs...)}, nil
 }
 
 func TestNewHandlerRejectsNilBackend(t *testing.T) {

@@ -9,9 +9,10 @@ The accepted architecture and delivery plan is in [docs/PLAN.md](docs/PLAN.md).
 ## Development status
 
 Delivery stages 1 through 9 are implemented. Stage 10 is underway: the
-transactional configuration core and local status/config management endpoints
+transactional configuration core and local config/flow management endpoints
 are implemented, including optimistic revisions, atomic runtime policy swaps,
-and rollback. Flow, rule, and MIDI management surfaces are next.
+rollback, bounded flow snapshots, and temporary mute/solo controls. Rule and
+MIDI management surfaces are next.
 
 ## Commands
 

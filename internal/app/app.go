@@ -208,7 +208,7 @@ func RunWithOptionsAndDependencies(
 	managementContext, cancelManagement := context.WithCancel(ctx)
 	defer cancelManagement()
 	if listenerIsLoopback(listener.Addr()) {
-		managementBackend, managementErr := newManagementBackend(controller, &runtimeReady, managementContext)
+		managementBackend, managementErr := newManagementBackend(controller, processing.registry, &runtimeReady, managementContext)
 		if managementErr != nil {
 			return fmt.Errorf("initialize management backend: %w", managementErr)
 		}

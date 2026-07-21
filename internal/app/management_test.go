@@ -18,6 +18,7 @@ import (
 
 	"github.com/ElectricNoodle/go-musical-packets/internal/capture"
 	"github.com/ElectricNoodle/go-musical-packets/internal/config"
+	"github.com/ElectricNoodle/go-musical-packets/internal/flow"
 	"github.com/ElectricNoodle/go-musical-packets/internal/managementapi"
 	"github.com/ElectricNoodle/go-musical-packets/internal/midi"
 )
@@ -685,9 +686,27 @@ func managementTestConfig() config.Config {
 	return configuration
 }
 
-func newTestManagementBackend(controller *Controller, ready *atomic.Bool, lifecycle context.Context) *managementBackend {
+func newTestManagementBackend(controller *Controller, ready *atomic.Bool, lifecycle context.Context, registries ...*flow.Registry) *managementBackend {
 	if lifecycle == nil {
 		lifecycle = context.Background()
+	}
+	if len(registries) > 1 {
+		panic("newTestManagementBackend accepts at most one registry")
+	}
+	var registry *flow.Registry
+	if len(registries) == 1 {
+		registry = registries[0]
+	} else {
+		configuration := controller.Current().Config
+		var err error
+		registry, err = flow.NewRegistry(flow.RegistryConfig{
+			Seed:     configuration.Mapping.Seed,
+			Capacity: configuration.Performance.FlowRegistryCapacity,
+			TTL:      configuration.Performance.FlowTTL,
+		})
+		if err != nil {
+			panic(err)
+		}
 	}
 	var key [sha256.Size]byte
 	for index := range key {
@@ -695,6 +714,7 @@ func newTestManagementBackend(controller *Controller, ready *atomic.Bool, lifecy
 	}
 	return &managementBackend{
 		controller: controller,
+		registry:   registry,
 		ready:      ready,
 		lifecycle:  lifecycle,
 		revisions:  newManagementRevisionCodecWithKey(key),

@@ -23,6 +23,9 @@ GET  /api/v1/status
 GET  /api/v1/config
 POST /api/v1/config/validate
 PUT  /api/v1/config
+GET  /api/v1/flows
+POST /api/v1/flows/mute
+POST /api/v1/flows/solo
 ```
 
 `GET /api/v1/config` returns canonical full YAML and a strong `ETag` containing
@@ -103,3 +106,32 @@ sanitized status state.
 The status `writable` field means the process was started with a durable config
 repository. It does not promise that a particular mutation will pass mode,
 revision, validation, or persistence checks.
+
+## Live flows and temporary overlays
+
+`GET /api/v1/flows` returns retained bidirectional flows newest-first, with a
+stable ID, canonical endpoints, protocol, first and last observation times,
+packet and byte counters, directional packet counters, and current mute/solo
+flags. The default limit is 500 and `?limit=N` accepts 1 through 5000. The
+response also reports the registry total, whether the result is truncated, and
+the complete temporary overlay. Rates and controlling-rule explanations are
+not inferred from these aggregate snapshots; later event sampling will provide
+those views accurately.
+
+Mute and solo requests use strict JSON:
+
+```json
+{"flow_ids":["0123456789abcdef01234567"]}
+```
+
+`POST /api/v1/flows/mute` and `POST /api/v1/flows/solo` each replace that
+complete set; an explicit empty array clears it. IDs must be unique 24-character
+lowercase hexadecimal values. The response contains both sets in sorted order.
+These overlays are bounded, temporary, and deliberately not persisted or
+revisioned, so concurrent writes to the same set are last-writer-wins. Mute and
+solo changes are serialized with config swaps and preserve one another.
+
+Safety exclusions still take precedence, followed by temporary mute, temporary
+solo, exact-flow pinned rules, broad user rules, and the configured default.
+Overlay writes are allowed for a read-only config runtime, but rejected while
+the application is starting, stopping, or its policy state is unhealthy.

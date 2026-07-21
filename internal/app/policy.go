@@ -69,6 +69,16 @@ type ReadOnlyError struct{}
 
 func (*ReadOnlyError) Error() string { return "runtime configuration is read-only" }
 
+// policyStateError rejects temporary policy mutations while the controller is
+// not known to agree with durable configuration.
+type policyStateError struct {
+	state ControllerState
+}
+
+func (err *policyStateError) Error() string {
+	return fmt.Sprintf("runtime configuration state is %s", err.state)
+}
+
 // DegradedError reports that a failed publication could not be rolled back
 // durably, so further persisted changes are unsafe.
 type DegradedError struct {
@@ -417,19 +427,40 @@ func (err *policyApplyError) Unwrap() []error {
 // ReplaceMute atomically replaces the temporary mute set while preserving the
 // active revision, configuration, selector, and solo set.
 func (controller *Controller) ReplaceMute(muted map[string]struct{}) (flow.Overlay, error) {
-	return controller.replaceOverlay(muted, nil, true)
+	return controller.ReplaceMuteContext(context.Background(), muted)
+}
+
+// ReplaceMuteContext is ReplaceMute with cancellation checked under the
+// controller's publication lock.
+func (controller *Controller) ReplaceMuteContext(ctx context.Context, muted map[string]struct{}) (flow.Overlay, error) {
+	return controller.replaceOverlay(ctx, muted, nil, true)
 }
 
 // ReplaceSolo atomically replaces the temporary solo set while preserving the
 // active revision, configuration, selector, and mute set.
 func (controller *Controller) ReplaceSolo(soloed map[string]struct{}) (flow.Overlay, error) {
-	return controller.replaceOverlay(nil, soloed, false)
+	return controller.ReplaceSoloContext(context.Background(), soloed)
 }
 
-func (controller *Controller) replaceOverlay(muted, soloed map[string]struct{}, replaceMute bool) (flow.Overlay, error) {
+// ReplaceSoloContext is ReplaceSolo with cancellation checked under the
+// controller's publication lock.
+func (controller *Controller) ReplaceSoloContext(ctx context.Context, soloed map[string]struct{}) (flow.Overlay, error) {
+	return controller.replaceOverlay(ctx, nil, soloed, false)
+}
+
+func (controller *Controller) replaceOverlay(ctx context.Context, muted, soloed map[string]struct{}, replaceMute bool) (flow.Overlay, error) {
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
 	current := controller.store.current.Load()
+	if ctx == nil {
+		return cloneOverlay(current.overlay), errors.New("runtime overlay context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return cloneOverlay(current.overlay), err
+	}
+	if current.state != ControllerStateReady {
+		return cloneOverlay(current.overlay), &policyStateError{state: current.state}
+	}
 	limit := current.configuration.Performance.FlowRegistryCapacity
 	if limit > maximumOverlayFlows {
 		limit = maximumOverlayFlows
@@ -453,6 +484,9 @@ func (controller *Controller) replaceOverlay(muted, soloed map[string]struct{}, 
 		next.overlay.Muted = cloneSet(muted)
 	} else {
 		next.overlay.Soloed = cloneSet(soloed)
+	}
+	if err := ctx.Err(); err != nil {
+		return cloneOverlay(current.overlay), err
 	}
 	controller.store.publish(next)
 	return cloneOverlay(next.overlay), nil

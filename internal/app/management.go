@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ElectricNoodle/go-musical-packets/internal/config"
+	"github.com/ElectricNoodle/go-musical-packets/internal/flow"
 	"github.com/ElectricNoodle/go-musical-packets/internal/managementapi"
 )
 
@@ -22,6 +23,7 @@ const (
 
 type managementBackend struct {
 	controller *Controller
+	registry   *flow.Registry
 	ready      *atomic.Bool
 	lifecycle  context.Context
 	revisions  *managementRevisionCodec
@@ -39,9 +41,12 @@ type managementRevisionCodec struct {
 	order       []managementapi.Revision
 }
 
-func newManagementBackend(controller *Controller, ready *atomic.Bool, lifecycle context.Context) (*managementBackend, error) {
+func newManagementBackend(controller *Controller, registry *flow.Registry, ready *atomic.Bool, lifecycle context.Context) (*managementBackend, error) {
 	if controller == nil {
 		return nil, errors.New("management controller is required")
+	}
+	if registry == nil {
+		return nil, errors.New("management flow registry is required")
 	}
 	if ready == nil {
 		return nil, errors.New("management readiness is required")
@@ -52,6 +57,7 @@ func newManagementBackend(controller *Controller, ready *atomic.Bool, lifecycle 
 	}
 	return &managementBackend{
 		controller: controller,
+		registry:   registry,
 		ready:      ready,
 		lifecycle:  lifecycle,
 		revisions:  revisions,

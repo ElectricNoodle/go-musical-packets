@@ -154,20 +154,43 @@ func (r *Registry) Get(id string) (Snapshot, bool) {
 
 // Snapshots returns flows ordered by most recent activity, then ID.
 func (r *Registry) Snapshots() []Snapshot {
+	result, _ := r.RecentSnapshots(r.capacity)
+	return result
+}
+
+// RecentSnapshots returns at most limit flows ordered by most recent activity,
+// then ID, together with the total number of flows retained at the same
+// snapshot boundary. It retains only the requested number of detached values
+// while scanning the registry.
+func (r *Registry) RecentSnapshots(limit int) ([]Snapshot, int) {
 	r.mu.RLock()
-	result := make([]Snapshot, 0, len(r.flows))
+	total := len(r.flows)
+	if limit <= 0 || total == 0 {
+		r.mu.RUnlock()
+		return []Snapshot{}, total
+	}
+	if limit > total {
+		limit = total
+	}
+
+	result := make(recentSnapshotHeap, 0, limit)
 	for _, entry := range r.flows {
-		result = append(result, entry.snapshot)
+		candidate := entry.snapshot
+		if len(result) < limit {
+			heap.Push(&result, candidate)
+			continue
+		}
+		if snapshotBefore(candidate, result[0]) {
+			result[0] = candidate
+			heap.Fix(&result, 0)
+		}
 	}
 	r.mu.RUnlock()
 
 	sort.Slice(result, func(i, j int) bool {
-		if result[i].LastSeen.Equal(result[j].LastSeen) {
-			return result[i].ID < result[j].ID
-		}
-		return result[i].LastSeen.After(result[j].LastSeen)
+		return snapshotBefore(result[i], result[j])
 	})
-	return result
+	return []Snapshot(result), total
 }
 
 // Len returns the current number of retained flows.
@@ -195,6 +218,37 @@ func (r *Registry) update(entry *registryEntry, event packet.Event, direction Di
 }
 
 type entryHeap []*registryEntry
+
+// recentSnapshotHeap keeps the least recent retained candidate at its root so
+// a registry scan can select the newest limit values without copying all flows.
+type recentSnapshotHeap []Snapshot
+
+func snapshotBefore(left, right Snapshot) bool {
+	if left.LastSeen.Equal(right.LastSeen) {
+		return left.ID < right.ID
+	}
+	return left.LastSeen.After(right.LastSeen)
+}
+
+func (h recentSnapshotHeap) Len() int { return len(h) }
+
+func (h recentSnapshotHeap) Less(i, j int) bool {
+	return snapshotBefore(h[j], h[i])
+}
+
+func (h recentSnapshotHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *recentSnapshotHeap) Push(value any) {
+	*h = append(*h, value.(Snapshot))
+}
+
+func (h *recentSnapshotHeap) Pop() any {
+	old := *h
+	last := len(old) - 1
+	value := old[last]
+	*h = old[:last]
+	return value
+}
 
 func (h entryHeap) Len() int { return len(h) }
 

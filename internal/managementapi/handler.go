@@ -56,6 +56,9 @@ type Backend interface {
 	Config(context.Context) (ConfigDocument, error)
 	ValidateConfig(context.Context, config.Config) (Validation, error)
 	UpdateConfig(context.Context, Revision, config.Config) (ConfigDocument, error)
+	Flows(context.Context, FlowPageRequest) (FlowPage, error)
+	SetMutedFlows(context.Context, []string) (FlowOverlay, error)
+	SetSoloedFlows(context.Context, []string) (FlowOverlay, error)
 }
 
 // ErrorKind classifies errors returned across the Backend boundary.
@@ -164,6 +167,24 @@ func (handler *handler) ServeHTTP(response http.ResponseWriter, request *http.Re
 			return
 		}
 		handler.validateConfig(response, request)
+	case "/api/v1/flows":
+		if request.Method != http.MethodGet && request.Method != http.MethodHead {
+			methodNotAllowed(response, request, "GET, HEAD")
+			return
+		}
+		handler.flows(response, request)
+	case "/api/v1/flows/mute":
+		if request.Method != http.MethodPost {
+			methodNotAllowed(response, request, "POST")
+			return
+		}
+		handler.setMutedFlows(response, request)
+	case "/api/v1/flows/solo":
+		if request.Method != http.MethodPost {
+			methodNotAllowed(response, request, "POST")
+			return
+		}
+		handler.setSoloedFlows(response, request)
 	default:
 		writeProblem(response, request, http.StatusNotFound, "not_found", "the requested management API route does not exist", nil)
 	}
