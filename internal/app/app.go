@@ -1,0 +1,492 @@
+// Package app composes the standalone musical-packets runtime.
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/ElectricNoodle/go-musical-packets/internal/capture"
+	"github.com/ElectricNoodle/go-musical-packets/internal/config"
+	"github.com/ElectricNoodle/go-musical-packets/internal/flow"
+	"github.com/ElectricNoodle/go-musical-packets/internal/httpserver"
+	"github.com/ElectricNoodle/go-musical-packets/internal/metrics"
+	"github.com/ElectricNoodle/go-musical-packets/internal/midi"
+	"github.com/ElectricNoodle/go-musical-packets/internal/music"
+	"github.com/ElectricNoodle/go-musical-packets/internal/pipeline"
+)
+
+const (
+	captureReadTimeout = 250 * time.Millisecond
+	safetySourceRuleID = "__musical_packets_http_source"
+	safetyDestRuleID   = "__musical_packets_http_destination"
+)
+
+var errMIDIDisabled = errors.New("MIDI output is disabled")
+
+// Dependencies contains operating-system boundaries that tests and embedding
+// programs may replace. Zero fields use the production implementations.
+type Dependencies struct {
+	Interfaces    func() ([]capture.Interface, error)
+	OpenLive      func(capture.LiveConfig) (capture.Source, error)
+	NewMIDIDriver func() (midi.Driver, error)
+	Listen        func(network, address string) (net.Listener, error)
+}
+
+func (dependencies Dependencies) withDefaults() Dependencies {
+	if dependencies.Interfaces == nil {
+		dependencies.Interfaces = capture.Interfaces
+	}
+	if dependencies.OpenLive == nil {
+		dependencies.OpenLive = capture.OpenLive
+	}
+	if dependencies.NewMIDIDriver == nil {
+		dependencies.NewMIDIDriver = midi.NewDriver
+	}
+	if dependencies.Listen == nil {
+		dependencies.Listen = net.Listen
+	}
+	return dependencies
+}
+
+// Run validates and runs a standalone node until cancellation or a terminal
+// component result. Context cancellation is a normal, successful shutdown.
+func Run(ctx context.Context, configuration config.Config) error {
+	return RunWithDependencies(ctx, configuration, Dependencies{})
+}
+
+// RunWithDependencies is Run with injectable capture, MIDI, and listener
+// boundaries. It is intended for application-level integration tests and
+// callers that embed the runtime.
+func RunWithDependencies(ctx context.Context, configuration config.Config, dependencies Dependencies) (runErr error) {
+	if ctx == nil {
+		return errors.New("application context is required")
+	}
+	if err := configuration.Validate(); err != nil {
+		return fmt.Errorf("validate configuration: %w", err)
+	}
+	if configuration.Instance.Role != config.RoleStandalone {
+		return fmt.Errorf("run standalone: instance role %q is unsupported", configuration.Instance.Role)
+	}
+	if configuration.Peer.Enabled {
+		return errors.New("run standalone: peer transport is unsupported")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil
+	}
+	dependencies = dependencies.withDefaults()
+
+	bundle, err := metrics.New(configuration.Metrics.Namespace)
+	if err != nil {
+		return fmt.Errorf("initialize metrics: %w", err)
+	}
+	var manager *midi.Manager
+	var runtimeReady atomic.Bool
+	readiness := func(context.Context) error {
+		if !runtimeReady.Load() {
+			return errors.New("application is starting or stopping")
+		}
+		if configuration.MIDI.Enabled {
+			if manager == nil {
+				return midi.ErrOutputUnavailable
+			}
+			if _, connected := manager.Current(); !connected {
+				return midi.ErrOutputUnavailable
+			}
+		}
+		return nil
+	}
+	handler, err := httpserver.NewHandler(bundle.Registry, nil, readiness)
+	if err != nil {
+		return fmt.Errorf("initialize HTTP handler: %w", err)
+	}
+
+	listener, err := dependencies.Listen("tcp", configuration.Server.ListenAddress)
+	if err != nil {
+		return fmt.Errorf("listen on %q: %w", configuration.Server.ListenAddress, err)
+	}
+	listenerOwnedByServer := false
+	defer func() {
+		if !listenerOwnedByServer {
+			runErr = errors.Join(runErr, listener.Close())
+		}
+	}()
+
+	httpPort, err := listenerPort(listener.Addr())
+	if err != nil {
+		return fmt.Errorf("resolve HTTP listener port: %w", err)
+	}
+	userRules, err := configuration.FlowRules()
+	if err != nil {
+		return fmt.Errorf("build flow rules: %w", err)
+	}
+
+	var registry *flow.Registry
+	var selector *flow.Selector
+	var mapper *music.Mapper
+	if configuration.Capture.Enabled {
+		registry, err = flow.NewRegistry(flow.RegistryConfig{
+			Seed:     configuration.Mapping.Seed,
+			Capacity: configuration.Performance.FlowRegistryCapacity,
+			TTL:      configuration.Performance.FlowTTL,
+		})
+		if err != nil {
+			return fmt.Errorf("initialize flow registry: %w", err)
+		}
+		selector, err = flow.NewSelector(flow.SelectorConfig{
+			Seed:        configuration.Mapping.Seed,
+			Default:     flow.Action{State: flow.State(configuration.Mapping.DefaultState), Channel: configuration.Mapping.DefaultChannel},
+			SafetyRules: httpSafetyRules(httpPort, userRules),
+			UserRules:   userRules,
+		})
+		if err != nil {
+			return fmt.Errorf("initialize flow selector: %w", err)
+		}
+		mapper, err = music.NewMapper(music.MapperConfig{
+			Seed:            configuration.Mapping.Seed,
+			Origin:          configuration.Instance.ID,
+			MinimumNote:     configuration.Mapping.MinimumNote,
+			MaximumNote:     configuration.Mapping.MaximumNote,
+			MinimumDuration: configuration.Mapping.MinimumDuration,
+			MaximumDuration: configuration.Mapping.MaximumDuration,
+		})
+		if err != nil {
+			return fmt.Errorf("initialize music mapper: %w", err)
+		}
+	}
+
+	var scheduler *midi.Scheduler
+	var managerCancel context.CancelFunc
+	var managerDone chan error
+	if configuration.MIDI.Enabled {
+		driver, driverErr := dependencies.NewMIDIDriver()
+		if driverErr != nil {
+			return fmt.Errorf("initialize MIDI driver: %w", driverErr)
+		}
+		driverOwnedByManager := false
+		defer func() {
+			if !driverOwnedByManager {
+				runErr = errors.Join(runErr, driver.Close())
+			}
+		}()
+
+		manager, err = midi.NewManager(midi.ManagerConfig{
+			Driver:            driver,
+			ExactDeviceName:   configuration.MIDI.ExactDeviceName,
+			DeviceNamePattern: configuration.MIDI.DeviceNameRegexp,
+			PollInterval:      configuration.MIDI.PollInterval,
+			Observer:          bundle.MIDI,
+		})
+		if err != nil {
+			return fmt.Errorf("initialize MIDI manager: %w", err)
+		}
+		scheduler, err = midi.NewScheduler(midi.SchedulerConfig{
+			Sender:                   manager,
+			MaximumNotesPerSecond:    configuration.Performance.MaximumNotesPerSecond,
+			MaximumPolyphony:         configuration.Performance.MaximumPolyphony,
+			MinimumRetriggerInterval: configuration.Performance.MinimumRetriggerInterval,
+			Observer:                 bundle.MIDI,
+		})
+		if err != nil {
+			return fmt.Errorf("initialize MIDI scheduler: %w", err)
+		}
+
+		managerContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		managerCancel = cancel
+		managerDone = make(chan error, 1)
+		driverOwnedByManager = true
+		go func() { managerDone <- manager.Run(managerContext) }()
+
+		select {
+		case <-manager.Ready():
+		case managerErr := <-managerDone:
+			return errors.Join(componentStopped("MIDI manager", managerErr), closeScheduler(scheduler))
+		case <-ctx.Done():
+			closeErr := closeScheduler(scheduler)
+			managerCancel()
+			managerErr := <-managerDone
+			return errors.Join(closeErr, normalizeComponentError(managerErr))
+		}
+	}
+
+	var source capture.Source
+	var processor *pipeline.Processor
+	if configuration.Capture.Enabled {
+		interfaces, interfacesErr := dependencies.Interfaces()
+		if interfacesErr != nil {
+			return shutdownStartup(fmt.Errorf("list capture interfaces: %w", interfacesErr), scheduler, managerCancel, managerDone)
+		}
+		selected, selectErr := capture.SelectInterface(interfaces, configuration.Capture.Interface)
+		if selectErr != nil {
+			return shutdownStartup(fmt.Errorf("select capture interface: %w", selectErr), scheduler, managerCancel, managerDone)
+		}
+		source, err = dependencies.OpenLive(capture.LiveConfig{
+			Device:         selected.Name,
+			SnapshotLength: configuration.Capture.SnapshotLength,
+			Promiscuous:    configuration.Capture.Promiscuous,
+			Timeout:        captureReadTimeout,
+			BPF:            captureBPF(configuration.Capture.BPF, httpPort),
+		})
+		if err != nil {
+			return shutdownStartup(fmt.Errorf("open live capture: %w", err), scheduler, managerCancel, managerDone)
+		}
+
+		sink := pipeline.Sink(discardSink{})
+		if scheduler != nil {
+			sink = scheduler
+		}
+		processor, err = pipeline.New(pipeline.Config{
+			Source:              source,
+			Registry:            registry,
+			Selector:            selector,
+			Mapper:              mapper,
+			Sink:                sink,
+			Observer:            bundle.Pipeline,
+			PacketQueueCapacity: configuration.Performance.PacketQueueCapacity,
+			NoteQueueCapacity:   configuration.Performance.NoteQueueCapacity,
+		})
+		if err != nil {
+			pipelineErr := errors.Join(fmt.Errorf("initialize packet pipeline: %w", err), source.Close())
+			return shutdownStartup(pipelineErr, scheduler, managerCancel, managerDone)
+		}
+	}
+
+	server := &http.Server{
+		Handler:      handler,
+		ReadTimeout:  configuration.Server.ReadTimeout,
+		WriteTimeout: configuration.Server.WriteTimeout,
+	}
+	serverDone := make(chan error, 1)
+	listenerOwnedByServer = true
+	go func() { serverDone <- server.Serve(listener) }()
+
+	var processorCancel context.CancelFunc
+	var processorDone chan error
+	if processor != nil {
+		processorContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		processorCancel = cancel
+		processorDone = make(chan error, 1)
+		go func() { processorDone <- processor.Run(processorContext) }()
+	}
+	runtimeReady.Store(true)
+
+	return supervise(ctx, configuration.Server.WriteTimeout, server, serverDone, &runtimeReady, processorCancel, processorDone, scheduler, managerCancel, managerDone)
+}
+
+type discardSink struct{}
+
+func (discardSink) Write(context.Context, music.NoteEvent) error { return errMIDIDisabled }
+
+func listenerPort(address net.Addr) (uint16, error) {
+	if address == nil {
+		return 0, errors.New("listener address is unavailable")
+	}
+	_, portText, err := net.SplitHostPort(address.String())
+	if err != nil {
+		return 0, fmt.Errorf("parse listener address %q: %w", address, err)
+	}
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil {
+		return 0, fmt.Errorf("parse listener port %q: %w", portText, err)
+	}
+	if port == 0 {
+		return 0, errors.New("listener reported port zero")
+	}
+	return uint16(port), nil
+}
+
+func httpSafetyRules(port uint16, existing []flow.Rule) []flow.Rule {
+	sourceID := uniqueRuleID(safetySourceRuleID, existing)
+	destinationID := uniqueRuleID(safetyDestRuleID, append(existing, flow.Rule{ID: sourceID}))
+	sourcePort := &flow.PortRange{Minimum: port, Maximum: port}
+	destinationPort := &flow.PortRange{Minimum: port, Maximum: port}
+	return []flow.Rule{
+		{
+			ID:      sourceID,
+			Name:    "application HTTP source traffic",
+			Enabled: true,
+			Match:   flow.Match{Protocol: "tcp", SourcePorts: sourcePort},
+			Action:  flow.Action{State: flow.StateIgnore},
+		},
+		{
+			ID:      destinationID,
+			Name:    "application HTTP destination traffic",
+			Enabled: true,
+			Match:   flow.Match{Protocol: "tcp", DestinationPorts: destinationPort},
+			Action:  flow.Action{State: flow.StateIgnore},
+		},
+	}
+}
+
+func uniqueRuleID(base string, existing []flow.Rule) string {
+	used := make(map[string]struct{}, len(existing))
+	for _, rule := range existing {
+		used[rule.ID] = struct{}{}
+	}
+	for suffix := 0; ; suffix++ {
+		candidate := base
+		if suffix > 0 {
+			candidate += "_" + strconv.Itoa(suffix)
+		}
+		if _, found := used[candidate]; !found {
+			return candidate
+		}
+	}
+}
+
+func captureBPF(configured string, port uint16) string {
+	exclusion := fmt.Sprintf("not (tcp src port %d or tcp dst port %d)", port, port)
+	configured = strings.TrimSpace(configured)
+	if configured == "" {
+		return exclusion
+	}
+	return fmt.Sprintf("(%s) and (%s)", configured, exclusion)
+}
+
+func shutdownStartup(startupErr error, scheduler *midi.Scheduler, managerCancel context.CancelFunc, managerDone <-chan error) error {
+	closeErr := closeScheduler(scheduler)
+	var managerErr error
+	if managerCancel != nil {
+		managerCancel()
+		managerErr = <-managerDone
+	}
+	return errors.Join(startupErr, closeErr, normalizeComponentError(managerErr))
+}
+
+func supervise(
+	ctx context.Context,
+	shutdownTimeout time.Duration,
+	server *http.Server,
+	serverDone <-chan error,
+	runtimeReady *atomic.Bool,
+	processorCancel context.CancelFunc,
+	processorDone <-chan error,
+	scheduler *midi.Scheduler,
+	managerCancel context.CancelFunc,
+	managerDone <-chan error,
+) error {
+	var result error
+	processorFinished := processorDone == nil
+	managerFinished := managerDone == nil
+	serverFinished := false
+
+	if processorDone == nil && managerDone == nil {
+		select {
+		case <-ctx.Done():
+		case serverErr := <-serverDone:
+			serverFinished = true
+			result = componentStopped("HTTP server", normalizeHTTPError(serverErr))
+		}
+	} else {
+		select {
+		case <-ctx.Done():
+		case processorErr := <-processorDone:
+			processorFinished = true
+			result = componentStopped("packet pipeline", processorErr)
+		case managerErr := <-managerDone:
+			managerFinished = true
+			result = componentStopped("MIDI manager", managerErr)
+		case serverErr := <-serverDone:
+			serverFinished = true
+			result = componentStopped("HTTP server", normalizeHTTPError(serverErr))
+		}
+	}
+
+	runtimeReady.Store(false)
+	// Keep these phases deliberately sequential: MIDI reset depends on the
+	// manager output remaining alive until the pipeline can no longer write.
+	if processorCancel != nil {
+		processorCancel()
+	}
+	if !processorFinished {
+		result = errors.Join(result, normalizeComponentError(<-processorDone))
+	}
+	result = errors.Join(result, closeScheduler(scheduler))
+	if managerCancel != nil {
+		managerCancel()
+	}
+	if !managerFinished {
+		result = errors.Join(result, normalizeComponentError(<-managerDone))
+	}
+
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdownErr := server.Shutdown(shutdownContext)
+	cancelShutdown()
+	if shutdownErr != nil {
+		shutdownErr = errors.Join(shutdownErr, server.Close())
+	}
+	result = errors.Join(result, shutdownErr)
+	if !serverFinished {
+		result = errors.Join(result, normalizeHTTPError(<-serverDone))
+	}
+	return result
+}
+
+func closeScheduler(scheduler *midi.Scheduler) error {
+	if scheduler == nil {
+		return nil
+	}
+	return scheduler.Close()
+}
+
+func componentStopped(name string, err error) error {
+	if normalized := normalizeComponentError(err); normalized != nil {
+		return fmt.Errorf("%s: %w", name, normalized)
+	}
+	return fmt.Errorf("%s stopped unexpectedly", name)
+}
+
+func normalizeComponentError(err error) error {
+	normalized, _ := filterExpectedErrors(err, func(candidate error) bool {
+		return errors.Is(candidate, context.Canceled) || errors.Is(candidate, context.DeadlineExceeded)
+	})
+	return normalized
+}
+
+func normalizeHTTPError(err error) error {
+	normalized, _ := filterExpectedErrors(err, func(candidate error) bool {
+		return errors.Is(candidate, http.ErrServerClosed) ||
+			errors.Is(candidate, context.Canceled) ||
+			errors.Is(candidate, context.DeadlineExceeded)
+	})
+	return normalized
+}
+
+func filterExpectedErrors(err error, expected func(error) bool) (error, bool) {
+	if err == nil {
+		return nil, false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		children := joined.Unwrap()
+		remaining := make([]error, 0, len(children))
+		changed := false
+		for _, child := range children {
+			normalized, childChanged := filterExpectedErrors(child, expected)
+			changed = changed || childChanged
+			if normalized != nil {
+				remaining = append(remaining, normalized)
+			}
+		}
+		if !changed {
+			return err, false
+		}
+		return errors.Join(remaining...), true
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		normalized, changed := filterExpectedErrors(wrapped.Unwrap(), expected)
+		if !changed {
+			return err, false
+		}
+		return normalized, true
+	}
+	if expected(err) {
+		return nil, true
+	}
+	return err, false
+}

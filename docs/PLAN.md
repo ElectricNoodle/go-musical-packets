@@ -322,8 +322,8 @@ Pure domain packages do not depend directly on Prometheus.
 
 ## Delivery stages
 
-Stages 1 through 8 are implemented. The current implementation frontier is
-stage 9, standalone composition.
+Stages 1 through 9 are implemented. The current implementation frontier is
+stage 10, the management API and transactional configuration.
 
 1. Architecture record and exact behavioral specification.
 2. Go/frontend foundations, config, logging, lifecycle, build metadata, and CI.

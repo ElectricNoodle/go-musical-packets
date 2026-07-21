@@ -109,6 +109,13 @@ func TestSchedulerPanicAndClose(t *testing.T) {
 	}
 }
 
+func TestSchedulerCloseWithoutOutputIsSuccessful(t *testing.T) {
+	scheduler := testScheduler(t, unavailableSender{}, newManualClock(time.Unix(600, 0)), 10, 4, 0)
+	if err := scheduler.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil for unavailable output", err)
+	}
+}
+
 func testScheduler(t *testing.T, sender Sender, clock schedulerClock, rate, polyphony int, retrigger time.Duration) *Scheduler {
 	t.Helper()
 	scheduler, err := NewScheduler(SchedulerConfig{
@@ -137,6 +144,10 @@ type recordingSender struct {
 	messages [][]byte
 	err      error
 }
+
+type unavailableSender struct{}
+
+func (unavailableSender) Send([]byte) error { return ErrOutputUnavailable }
 
 func (s *recordingSender) Send(message []byte) error {
 	s.mu.Lock()

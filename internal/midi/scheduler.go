@@ -214,7 +214,7 @@ func (s *Scheduler) panicLocked() error {
 	var failures []error
 	for channel := uint8(1); channel <= 16; channel++ {
 		message, _ := AllNotesOff(channel)
-		if err := s.sendMessage("all_notes_off", message); err != nil {
+		if err := s.sendMessage("all_notes_off", message); err != nil && !errors.Is(err, ErrOutputUnavailable) {
 			failures = append(failures, err)
 		}
 		s.observer.Active(channel, 0, 0)

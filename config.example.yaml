@@ -1,0 +1,62 @@
+instance:
+  id: musical-packets
+  role: standalone
+
+capture:
+  enabled: true
+  interface: auto
+  bpf: "ip or ip6"
+  snapshot_length: 65535
+  promiscuous: true
+
+mapping:
+  version: flow-mode-v1
+  seed: musical-packets
+  default_state: monitor
+  default_channel: 1
+  minimum_note: 36
+  maximum_note: 96
+  minimum_duration: 50ms
+  maximum_duration: 2s
+
+performance:
+  packet_queue_capacity: 4096
+  note_queue_capacity: 1024
+  ui_queue_capacity: 512
+  flow_registry_capacity: 10000
+  flow_ttl: 5m
+  maximum_notes_per_second: 100
+  maximum_polyphony: 32
+  minimum_retrigger_interval: 10ms
+
+midi:
+  enabled: true
+  exact_device_name: ""
+  device_name_regexp: ""
+  poll_interval: 2s
+
+server:
+  listen_address: 127.0.0.1:8080
+  read_timeout: 10s
+  write_timeout: 10s
+
+metrics:
+  namespace: musical_packets
+
+logging:
+  level: info
+  format: text
+
+# Rules are evaluated in order. This example remains quiet until enabled.
+rules:
+  - id: https-client
+    name: HTTPS client traffic
+    enabled: false
+    match:
+      protocol: tcp
+      destination_ports:
+        minimum: 443
+        maximum: 443
+    action:
+      state: play
+      channel: 1

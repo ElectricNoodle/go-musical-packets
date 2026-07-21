@@ -61,8 +61,38 @@ func TestManagerRunHonorsCancellationAndClosesDriver(t *testing.T) {
 	if !driver.closed {
 		t.Fatal("Run() did not close driver")
 	}
+	select {
+	case <-manager.Ready():
+	default:
+		t.Fatal("Ready remained open after startup was canceled")
+	}
 	if err := manager.Run(context.Background()); err == nil {
 		t.Fatal("second Run() error = nil")
+	}
+}
+
+func TestManagerReadyAfterInitialUnavailableDiscovery(t *testing.T) {
+	driver := &fakeDriver{}
+	manager, err := NewManager(ManagerConfig{Driver: driver, PollInterval: time.Hour})
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- manager.Run(ctx) }()
+
+	select {
+	case <-manager.Ready():
+	case <-time.After(time.Second):
+		t.Fatal("manager did not report initial discovery completion")
+	}
+	if _, connected := manager.Current(); connected {
+		t.Fatal("manager connected without an available device")
+	}
+
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled", err)
 	}
 }
 

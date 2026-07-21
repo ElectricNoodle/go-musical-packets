@@ -30,11 +30,20 @@ Selection precedence remains exact configured name, configured regular
 expression, then the first available output. Starting without a MIDI device is
 normal: sends report `ErrOutputUnavailable`, and polling continues.
 
+`Manager.Ready` closes after the first discovery attempt, whether or not that
+attempt finds a device, or if the manager terminates before discovery begins.
+Runtime composition waits for this boundary before starting capture so a
+quickly terminating packet source cannot overtake initial MIDI discovery.
+
 A failed send closes and invalidates the current output. A later poll reopens
 the preferred device without restarting capture or mapping. Cancellation closes
 the output before the driver. Runtime composition must close or panic the
 scheduler before canceling the manager so reset messages have a live port when
 possible.
+
+Scheduler panic and close still attempt all 16 reset messages while disconnected,
+but an unavailable output is not itself a shutdown failure. Other reset and
+driver-close errors remain visible to the caller.
 
 ## Metrics
 

@@ -39,6 +39,8 @@ type Config struct {
 	Server      ServerConfig      `json:"server" yaml:"server"`
 	Peer        PeerConfig        `json:"peer" yaml:"peer"`
 	Metrics     MetricsConfig     `json:"metrics" yaml:"metrics"`
+	Logging     LoggingConfig     `json:"logging" yaml:"logging"`
+	Rules       RulesConfig       `json:"rules" yaml:"rules"`
 }
 
 type InstanceConfig struct {
@@ -69,6 +71,8 @@ type PerformanceConfig struct {
 	PacketQueueCapacity      int           `json:"packet_queue_capacity" yaml:"packet_queue_capacity"`
 	NoteQueueCapacity        int           `json:"note_queue_capacity" yaml:"note_queue_capacity"`
 	UIQueueCapacity          int           `json:"ui_queue_capacity" yaml:"ui_queue_capacity"`
+	FlowRegistryCapacity     int           `json:"flow_registry_capacity" yaml:"flow_registry_capacity"`
+	FlowTTL                  time.Duration `json:"flow_ttl" yaml:"flow_ttl"`
 	MaximumNotesPerSecond    int           `json:"maximum_notes_per_second" yaml:"maximum_notes_per_second"`
 	MaximumPolyphony         int           `json:"maximum_polyphony" yaml:"maximum_polyphony"`
 	MinimumRetriggerInterval time.Duration `json:"minimum_retrigger_interval" yaml:"minimum_retrigger_interval"`
@@ -99,6 +103,29 @@ type MetricsConfig struct {
 	Namespace string `json:"namespace" yaml:"namespace"`
 }
 
+// LogLevel controls the minimum severity emitted by the application logger.
+type LogLevel string
+
+const (
+	LogLevelDebug LogLevel = "debug"
+	LogLevelInfo  LogLevel = "info"
+	LogLevelWarn  LogLevel = "warn"
+	LogLevelError LogLevel = "error"
+)
+
+// LogFormat controls the encoding used by the application logger.
+type LogFormat string
+
+const (
+	LogFormatText LogFormat = "text"
+	LogFormatJSON LogFormat = "json"
+)
+
+type LoggingConfig struct {
+	Level  LogLevel  `json:"level" yaml:"level"`
+	Format LogFormat `json:"format" yaml:"format"`
+}
+
 // Default returns a safe, quiet standalone configuration. Unmatched traffic is
 // monitored but does not produce notes.
 func Default() Config {
@@ -124,6 +151,8 @@ func Default() Config {
 			PacketQueueCapacity:      4096,
 			NoteQueueCapacity:        1024,
 			UIQueueCapacity:          512,
+			FlowRegistryCapacity:     10_000,
+			FlowTTL:                  5 * time.Minute,
 			MaximumNotesPerSecond:    100,
 			MaximumPolyphony:         32,
 			MinimumRetriggerInterval: 10 * time.Millisecond,
@@ -143,6 +172,7 @@ func Default() Config {
 			StaleAfter:     500 * time.Millisecond,
 		},
 		Metrics: MetricsConfig{Namespace: "musical_packets"},
+		Logging: LoggingConfig{Level: LogLevelInfo, Format: LogFormatText},
 	}
 }
 
@@ -192,6 +222,12 @@ func (c Config) Validate() error {
 	if c.Performance.PacketQueueCapacity <= 0 || c.Performance.NoteQueueCapacity <= 0 || c.Performance.UIQueueCapacity <= 0 {
 		problems = append(problems, errors.New("performance queue capacities must be positive"))
 	}
+	if c.Performance.FlowRegistryCapacity <= 0 {
+		problems = append(problems, errors.New("performance.flow_registry_capacity must be positive"))
+	}
+	if c.Performance.FlowTTL <= 0 {
+		problems = append(problems, errors.New("performance.flow_ttl must be positive"))
+	}
 	if c.Performance.MaximumNotesPerSecond <= 0 {
 		problems = append(problems, errors.New("performance.maximum_notes_per_second must be positive"))
 	}
@@ -238,6 +274,21 @@ func (c Config) Validate() error {
 
 	if !validMetricName(c.Metrics.Namespace) {
 		problems = append(problems, errors.New("metrics.namespace must match [a-zA-Z_:][a-zA-Z0-9_:]*"))
+	}
+
+	switch c.Logging.Level {
+	case LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError:
+	default:
+		problems = append(problems, fmt.Errorf("logging.level %q is invalid", c.Logging.Level))
+	}
+	switch c.Logging.Format {
+	case LogFormatText, LogFormatJSON:
+	default:
+		problems = append(problems, fmt.Errorf("logging.format %q is invalid", c.Logging.Format))
+	}
+
+	if _, err := c.FlowRules(); err != nil {
+		problems = append(problems, err)
 	}
 
 	return errors.Join(problems...)

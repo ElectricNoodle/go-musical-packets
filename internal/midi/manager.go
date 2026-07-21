@@ -40,6 +40,8 @@ type Manager struct {
 	output            Output
 	device            Device
 	running           atomic.Bool
+	ready             chan struct{}
+	readyOnce         sync.Once
 }
 
 type noopManagerObserver struct{}
@@ -70,10 +72,17 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 		deviceNamePattern: config.DeviceNamePattern,
 		pollInterval:      config.PollInterval,
 		observer:          config.Observer,
+		ready:             make(chan struct{}),
 	}
 	manager.observer.DeviceState("disconnected")
 	return manager, nil
 }
+
+// Ready is closed after the first device-discovery attempt completes, or when
+// Run terminates before an attempt can begin. A lack of devices or a discovery
+// failure still completes startup; callers can use Current to distinguish
+// connected and disconnected states.
+func (m *Manager) Ready() <-chan struct{} { return m.ready }
 
 // Run performs immediate discovery, polls until cancellation, then closes the
 // selected output and driver. It may be called once.
@@ -82,6 +91,7 @@ func (m *Manager) Run(ctx context.Context) (runErr error) {
 		return errors.New("MIDI manager may only run once")
 	}
 	defer func() {
+		m.readyOnce.Do(func() { close(m.ready) })
 		m.mu.Lock()
 		m.disconnectLocked()
 		m.mu.Unlock()
@@ -92,6 +102,7 @@ func (m *Manager) Run(ctx context.Context) (runErr error) {
 		return err
 	}
 	m.reconcile()
+	m.readyOnce.Do(func() { close(m.ready) })
 	ticker := time.NewTicker(m.pollInterval)
 	defer ticker.Stop()
 	for {
