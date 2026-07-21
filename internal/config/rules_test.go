@@ -83,6 +83,8 @@ func TestRulesConfigToFlowRulesRejectsInvalidRules(t *testing.T) {
 		{name: "missing ID", mutate: func(rule *RuleConfig) { rule.ID = " " }, want: "id is required"},
 		{name: "bad action state", mutate: func(rule *RuleConfig) { rule.Action.State = "dance" }, want: "action.state"},
 		{name: "bad action channel", mutate: func(rule *RuleConfig) { rule.Action.Channel = 17 }, want: "action.channel"},
+		{name: "short exact flow ID", mutate: func(rule *RuleConfig) { rule.Match.ExactFlowID = "0123" }, want: "match.exact_flow_id"},
+		{name: "uppercase exact flow ID", mutate: func(rule *RuleConfig) { rule.Match.ExactFlowID = "0123456789ABCDEF01234567" }, want: "match.exact_flow_id"},
 		{name: "bad protocol", mutate: func(rule *RuleConfig) { rule.Match.Protocol = "sctp" }, want: "match.protocol"},
 		{name: "bad source CIDR", mutate: func(rule *RuleConfig) { rule.Match.SourceCIDR = "192.0.2.0/99" }, want: "match.source_cidr"},
 		{name: "bad destination CIDR", mutate: func(rule *RuleConfig) { rule.Match.DestinationCIDR = "example.com" }, want: "match.destination_cidr"},

@@ -554,6 +554,18 @@ func classifyChanges(current, candidate config.Config) Validation {
 	appendIfChanged(&restart, "logging.format", current.Logging.Format, candidate.Logging.Format)
 	appendIfChanged(&hot, "rules", current.Rules, candidate.Rules)
 
+	// Rules and mapping defaults are the complete hot-field allowlist. If the
+	// schema gains a field before this classifier is updated, reject that change
+	// instead of silently treating it as hot.
+	currentWithoutHot := current.Clone()
+	candidateWithoutHot := candidate.Clone()
+	candidateWithoutHot.Mapping.DefaultState = currentWithoutHot.Mapping.DefaultState
+	candidateWithoutHot.Mapping.DefaultChannel = currentWithoutHot.Mapping.DefaultChannel
+	candidateWithoutHot.Rules = currentWithoutHot.Rules
+	if len(restart) == 0 && !reflect.DeepEqual(currentWithoutHot, candidateWithoutHot) {
+		restart = append(restart, "unclassified")
+	}
+
 	// Defensive sorting makes the contract stable if fields are reorganized.
 	sort.Strings(hot)
 	sort.Strings(restart)

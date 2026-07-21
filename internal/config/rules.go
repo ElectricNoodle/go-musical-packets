@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -111,6 +112,12 @@ func (rule RuleConfig) toFlowRule() (flow.Rule, error) {
 	}
 
 	match := flow.Match{ExactFlowID: rule.Match.ExactFlowID, Protocol: rule.Match.Protocol}
+	if match.ExactFlowID != "" {
+		decoded, err := hex.DecodeString(match.ExactFlowID)
+		if err != nil || len(match.ExactFlowID) != 24 || hex.EncodeToString(decoded) != match.ExactFlowID {
+			problems = append(problems, errors.New("match.exact_flow_id must be 24 lowercase hexadecimal characters"))
+		}
+	}
 	switch match.Protocol {
 	case "", packet.ProtocolTCP, packet.ProtocolUDP, packet.ProtocolICMP, packet.ProtocolICMP6, packet.ProtocolOther:
 	default:

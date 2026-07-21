@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -135,6 +136,95 @@ func TestControllerClassifiesOnlyRulesAndMappingDefaultsAsHot(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClassifierCoversEveryConfigurationField(t *testing.T) {
+	mutations := map[string]func(*config.Config){
+		"instance.id":                            func(value *config.Config) { value.Instance.ID += "-changed" },
+		"instance.role":                          func(value *config.Config) { value.Instance.Role = config.RoleHost },
+		"capture.enabled":                        func(value *config.Config) { value.Capture.Enabled = !value.Capture.Enabled },
+		"capture.interface":                      func(value *config.Config) { value.Capture.Interface += "-changed" },
+		"capture.bpf":                            func(value *config.Config) { value.Capture.BPF += " tcp" },
+		"capture.snapshot_length":                func(value *config.Config) { value.Capture.SnapshotLength-- },
+		"capture.promiscuous":                    func(value *config.Config) { value.Capture.Promiscuous = !value.Capture.Promiscuous },
+		"mapping.version":                        func(value *config.Config) { value.Mapping.Version += "-changed" },
+		"mapping.seed":                           func(value *config.Config) { value.Mapping.Seed += "-changed" },
+		"mapping.default_state":                  func(value *config.Config) { value.Mapping.DefaultState = config.FlowPlay },
+		"mapping.default_channel":                func(value *config.Config) { value.Mapping.DefaultChannel++ },
+		"mapping.minimum_note":                   func(value *config.Config) { value.Mapping.MinimumNote++ },
+		"mapping.maximum_note":                   func(value *config.Config) { value.Mapping.MaximumNote-- },
+		"mapping.minimum_duration":               func(value *config.Config) { value.Mapping.MinimumDuration++ },
+		"mapping.maximum_duration":               func(value *config.Config) { value.Mapping.MaximumDuration++ },
+		"performance.packet_queue_capacity":      func(value *config.Config) { value.Performance.PacketQueueCapacity++ },
+		"performance.note_queue_capacity":        func(value *config.Config) { value.Performance.NoteQueueCapacity++ },
+		"performance.ui_queue_capacity":          func(value *config.Config) { value.Performance.UIQueueCapacity++ },
+		"performance.flow_registry_capacity":     func(value *config.Config) { value.Performance.FlowRegistryCapacity++ },
+		"performance.flow_ttl":                   func(value *config.Config) { value.Performance.FlowTTL++ },
+		"performance.maximum_notes_per_second":   func(value *config.Config) { value.Performance.MaximumNotesPerSecond++ },
+		"performance.maximum_polyphony":          func(value *config.Config) { value.Performance.MaximumPolyphony++ },
+		"performance.minimum_retrigger_interval": func(value *config.Config) { value.Performance.MinimumRetriggerInterval++ },
+		"midi.enabled":                           func(value *config.Config) { value.MIDI.Enabled = !value.MIDI.Enabled },
+		"midi.exact_device_name":                 func(value *config.Config) { value.MIDI.ExactDeviceName += "changed" },
+		"midi.device_name_regexp":                func(value *config.Config) { value.MIDI.DeviceNameRegexp += "changed" },
+		"midi.poll_interval":                     func(value *config.Config) { value.MIDI.PollInterval++ },
+		"server.listen_address":                  func(value *config.Config) { value.Server.ListenAddress += "changed" },
+		"server.read_timeout":                    func(value *config.Config) { value.Server.ReadTimeout++ },
+		"server.write_timeout":                   func(value *config.Config) { value.Server.WriteTimeout++ },
+		"peer.enabled":                           func(value *config.Config) { value.Peer.Enabled = !value.Peer.Enabled },
+		"peer.url":                               func(value *config.Config) { value.Peer.URL += "changed" },
+		"peer.reconnect_base":                    func(value *config.Config) { value.Peer.ReconnectBase++ },
+		"peer.reconnect_limit":                   func(value *config.Config) { value.Peer.ReconnectLimit++ },
+		"peer.stale_after":                       func(value *config.Config) { value.Peer.StaleAfter++ },
+		"metrics.namespace":                      func(value *config.Config) { value.Metrics.Namespace += "_changed" },
+		"logging.level":                          func(value *config.Config) { value.Logging.Level = config.LogLevelDebug },
+		"logging.format":                         func(value *config.Config) { value.Logging.Format = config.LogFormatJSON },
+		"rules": func(value *config.Config) {
+			value.Rules = config.RulesConfig{{ID: "changed", Action: config.RuleActionConfig{State: config.FlowMonitor}}}
+		},
+	}
+
+	base := testConfig()
+	for path, mutate := range mutations {
+		candidate := base.Clone()
+		mutate(&candidate)
+		classification := classifyChanges(base, candidate)
+		fields := append(append([]string(nil), classification.HotFields...), classification.RestartRequiredFields...)
+		if !containsString(fields, path) {
+			t.Errorf("classifyChanges(%s) = %#v, want changed field", path, classification)
+		}
+	}
+
+	declared := make([]string, 0, len(mutations))
+	for path := range mutations {
+		declared = append(declared, path)
+	}
+	sort.Strings(declared)
+	want := configurationLeafPaths(reflect.TypeOf(config.Config{}), "")
+	sort.Strings(want)
+	if !reflect.DeepEqual(declared, want) {
+		t.Fatalf("classifier field inventory = %v, schema leaves = %v", declared, want)
+	}
+}
+
+func configurationLeafPaths(value reflect.Type, prefix string) []string {
+	var paths []string
+	for index := 0; index < value.NumField(); index++ {
+		field := value.Field(index)
+		name := strings.Split(field.Tag.Get("json"), ",")[0]
+		if name == "" || name == "-" {
+			continue
+		}
+		path := name
+		if prefix != "" {
+			path = prefix + "." + name
+		}
+		if field.Type.Kind() == reflect.Struct {
+			paths = append(paths, configurationLeafPaths(field.Type, path)...)
+			continue
+		}
+		paths = append(paths, path)
+	}
+	return paths
 }
 
 func TestControllerRejectsReadOnlyStaleAndPersistenceFailureWithoutMutation(t *testing.T) {
