@@ -66,11 +66,12 @@ type MappingConfig struct {
 }
 
 type PerformanceConfig struct {
-	PacketQueueCapacity   int `json:"packet_queue_capacity" yaml:"packet_queue_capacity"`
-	NoteQueueCapacity     int `json:"note_queue_capacity" yaml:"note_queue_capacity"`
-	UIQueueCapacity       int `json:"ui_queue_capacity" yaml:"ui_queue_capacity"`
-	MaximumNotesPerSecond int `json:"maximum_notes_per_second" yaml:"maximum_notes_per_second"`
-	MaximumPolyphony      int `json:"maximum_polyphony" yaml:"maximum_polyphony"`
+	PacketQueueCapacity      int           `json:"packet_queue_capacity" yaml:"packet_queue_capacity"`
+	NoteQueueCapacity        int           `json:"note_queue_capacity" yaml:"note_queue_capacity"`
+	UIQueueCapacity          int           `json:"ui_queue_capacity" yaml:"ui_queue_capacity"`
+	MaximumNotesPerSecond    int           `json:"maximum_notes_per_second" yaml:"maximum_notes_per_second"`
+	MaximumPolyphony         int           `json:"maximum_polyphony" yaml:"maximum_polyphony"`
+	MinimumRetriggerInterval time.Duration `json:"minimum_retrigger_interval" yaml:"minimum_retrigger_interval"`
 }
 
 type MIDIConfig struct {
@@ -120,11 +121,12 @@ func Default() Config {
 			MaximumDuration: 2 * time.Second,
 		},
 		Performance: PerformanceConfig{
-			PacketQueueCapacity:   4096,
-			NoteQueueCapacity:     1024,
-			UIQueueCapacity:       512,
-			MaximumNotesPerSecond: 100,
-			MaximumPolyphony:      32,
+			PacketQueueCapacity:      4096,
+			NoteQueueCapacity:        1024,
+			UIQueueCapacity:          512,
+			MaximumNotesPerSecond:    100,
+			MaximumPolyphony:         32,
+			MinimumRetriggerInterval: 10 * time.Millisecond,
 		},
 		MIDI: MIDIConfig{
 			Enabled:      true,
@@ -195,6 +197,9 @@ func (c Config) Validate() error {
 	}
 	if c.Performance.MaximumPolyphony < 1 || c.Performance.MaximumPolyphony > 128 {
 		problems = append(problems, errors.New("performance.maximum_polyphony must be between 1 and 128"))
+	}
+	if c.Performance.MinimumRetriggerInterval < 0 {
+		problems = append(problems, errors.New("performance.minimum_retrigger_interval must not be negative"))
 	}
 
 	if c.MIDI.Enabled {

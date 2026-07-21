@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefaultIsValidAndQuiet(t *testing.T) {
@@ -52,5 +53,13 @@ func TestValidateRejectsBadDeviceRegexp(t *testing.T) {
 	config.MIDI.DeviceNameRegexp = "["
 	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "device_name_regexp") {
 		t.Fatalf("Validate() error = %v, want regexp error", err)
+	}
+}
+
+func TestValidateRejectsNegativeRetriggerInterval(t *testing.T) {
+	config := Default()
+	config.Performance.MinimumRetriggerInterval = -time.Millisecond
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "minimum_retrigger_interval") {
+		t.Fatalf("Validate() error = %v, want retrigger interval error", err)
 	}
 }

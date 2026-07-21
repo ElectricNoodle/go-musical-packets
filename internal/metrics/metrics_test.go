@@ -56,6 +56,28 @@ func TestNewPipelineObserverRejectsDuplicateRegistration(t *testing.T) {
 	}
 }
 
+func TestMIDIObserverExportsLifecycleAndSchedulerMetrics(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	observer, err := NewMIDIObserver("musical_packets", registry)
+	if err != nil {
+		t.Fatalf("NewMIDIObserver() error = %v", err)
+	}
+	observer.DeviceState("connected")
+	observer.Reconnect("success")
+	observer.DeviceError("send")
+	observer.Note(4, "played")
+	observer.Write("note_on", "success", time.Millisecond)
+	observer.Active(4, 2, 3)
+
+	assertMetricValue(t, observer.deviceConnected, 1)
+	assertMetricValue(t, observer.reconnects.WithLabelValues("success"), 1)
+	assertMetricValue(t, observer.deviceErrors.WithLabelValues("send"), 1)
+	assertMetricValue(t, observer.notes.WithLabelValues("4", "played"), 1)
+	assertMetricValue(t, observer.writes.WithLabelValues("note_on", "success"), 1)
+	assertMetricValue(t, observer.activeByChannel.WithLabelValues("4"), 2)
+	assertMetricValue(t, observer.activeTotal, 3)
+}
+
 func assertMetricValue(t *testing.T, collector prometheus.Collector, want float64) {
 	t.Helper()
 	if got := testutil.ToFloat64(collector); got != want {

@@ -3,6 +3,7 @@ package metrics
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -13,6 +14,7 @@ import (
 type Bundle struct {
 	Registry *prometheus.Registry
 	Pipeline *PipelineObserver
+	MIDI     *MIDIObserver
 }
 
 // New constructs an isolated registry with Go, process, and pipeline metrics.
@@ -28,7 +30,103 @@ func New(namespace string) (*Bundle, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Bundle{Registry: registry, Pipeline: observer}, nil
+	midiObserver, err := NewMIDIObserver(namespace, registry)
+	if err != nil {
+		return nil, err
+	}
+	return &Bundle{Registry: registry, Pipeline: observer, MIDI: midiObserver}, nil
+}
+
+// MIDIObserver implements the MIDI scheduler and manager observer contracts.
+type MIDIObserver struct {
+	deviceConnected prometheus.Gauge
+	reconnects      *prometheus.CounterVec
+	deviceErrors    *prometheus.CounterVec
+	notes           *prometheus.CounterVec
+	writes          *prometheus.CounterVec
+	writeDuration   *prometheus.HistogramVec
+	activeByChannel *prometheus.GaugeVec
+	activeTotal     prometheus.Gauge
+}
+
+// NewMIDIObserver registers bounded-cardinality MIDI collectors.
+func NewMIDIObserver(namespace string, registerer prometheus.Registerer) (*MIDIObserver, error) {
+	if registerer == nil {
+		return nil, fmt.Errorf("Prometheus registerer is required")
+	}
+	observer := &MIDIObserver{
+		deviceConnected: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Name: "midi_device_connected", Help: "Whether a selected MIDI output is currently connected.",
+		}),
+		reconnects: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace, Name: "midi_reconnects_total", Help: "MIDI discovery and reconnect attempts by bounded result.",
+		}, []string{"result"}),
+		deviceErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace, Name: "midi_errors_total", Help: "MIDI device errors by bounded operation.",
+		}, []string{"operation"}),
+		notes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace, Name: "midi_notes_total", Help: "MIDI note scheduler decisions by channel and bounded result.",
+		}, []string{"channel", "result"}),
+		writes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace, Name: "midi_writes_total", Help: "MIDI writes by bounded operation and result.",
+		}, []string{"operation", "result"}),
+		writeDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace, Name: "midi_write_duration_seconds", Help: "Time spent writing MIDI messages.",
+			Buckets: prometheus.ExponentialBuckets(0.00001, 2, 16),
+		}, []string{"operation"}),
+		activeByChannel: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Name: "midi_active_notes", Help: "Currently active scheduled notes by channel.",
+		}, []string{"channel"}),
+		activeTotal: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Name: "midi_active_notes_current", Help: "Currently active scheduled notes across all channels.",
+		}),
+	}
+	metricCollectors := []prometheus.Collector{
+		observer.deviceConnected, observer.reconnects, observer.deviceErrors,
+		observer.notes, observer.writes, observer.writeDuration,
+		observer.activeByChannel, observer.activeTotal,
+	}
+	registered := make([]prometheus.Collector, 0, len(metricCollectors))
+	for _, collector := range metricCollectors {
+		if err := registerer.Register(collector); err != nil {
+			for _, previous := range registered {
+				registerer.Unregister(previous)
+			}
+			return nil, fmt.Errorf("register MIDI metrics: %w", err)
+		}
+		registered = append(registered, collector)
+	}
+	return observer, nil
+}
+
+func (o *MIDIObserver) DeviceState(state string) {
+	if state == "connected" {
+		o.deviceConnected.Set(1)
+		return
+	}
+	o.deviceConnected.Set(0)
+}
+
+func (o *MIDIObserver) Reconnect(result string) {
+	o.reconnects.WithLabelValues(result).Inc()
+}
+
+func (o *MIDIObserver) DeviceError(operation string) {
+	o.deviceErrors.WithLabelValues(operation).Inc()
+}
+
+func (o *MIDIObserver) Note(channel uint8, result string) {
+	o.notes.WithLabelValues(strconv.Itoa(int(channel)), result).Inc()
+}
+
+func (o *MIDIObserver) Write(operation, result string, elapsed time.Duration) {
+	o.writes.WithLabelValues(operation, result).Inc()
+	o.writeDuration.WithLabelValues(operation).Observe(elapsed.Seconds())
+}
+
+func (o *MIDIObserver) Active(channel uint8, count, total int) {
+	o.activeByChannel.WithLabelValues(strconv.Itoa(int(channel))).Set(float64(count))
+	o.activeTotal.Set(float64(total))
 }
 
 // PipelineObserver is the Prometheus implementation of pipeline.Observer.
