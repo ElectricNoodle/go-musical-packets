@@ -15,6 +15,8 @@ import (
 	"github.com/coder/websocket"
 )
 
+const hostIdleTimeout = 3 * heartbeatInterval
+
 // NoteSink accepts validated remote triggers. The receiving host remains the
 // owner of scheduler admission and Note Off timing.
 type NoteSink interface {
@@ -40,11 +42,16 @@ type HostConfig struct {
 type Host struct {
 	config HostConfig
 
-	mu         sync.Mutex
-	nodes      map[string]*hostNode
-	generation uint64
-	duplicates map[string]time.Time
-	dupOrder   []duplicateEntry
+	mu           sync.Mutex
+	nodes        map[string]*hostNode
+	sessions     map[*websocket.Conn]struct{}
+	generation   uint64
+	duplicates   map[string]time.Time
+	dupOrder     []duplicateEntry
+	closing      bool
+	sessionCount int
+	closeOnce    sync.Once
+	sessionWG    sync.WaitGroup
 }
 
 type duplicateEntry struct {
@@ -68,7 +75,7 @@ func NewHost(config HostConfig) (*Host, error) {
 	if config.MappingVersion != music.FlowModeV1 {
 		return nil, errors.New("peer host mapping version is unsupported")
 	}
-	if config.MaximumConnections <= 0 || config.RecentCapacity < config.MaximumConnections || config.RecentTTL <= 0 || config.StaleAfter <= 0 || config.DuplicateCapacity <= 0 {
+	if config.MaximumConnections <= 0 || config.MaximumConnections > 1024 || config.RecentCapacity < config.MaximumConnections || config.RecentTTL <= 0 || config.StaleAfter <= 0 || config.DuplicateCapacity <= 0 {
 		return nil, errors.New("peer host connection, history, stale, or duplicate bounds are invalid")
 	}
 	if config.Now == nil {
@@ -79,7 +86,7 @@ func NewHost(config HostConfig) (*Host, error) {
 	}
 	return &Host{
 		config: config, nodes: make(map[string]*hostNode),
-		duplicates: make(map[string]time.Time),
+		duplicates: make(map[string]time.Time), sessions: make(map[*websocket.Conn]struct{}),
 	}, nil
 }
 
@@ -102,11 +109,21 @@ func (host *Host) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "peer authentication failed", http.StatusUnauthorized)
 		return
 	}
+	if !host.beginSession() {
+		http.Error(response, "peer host is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	defer host.endSession()
 	connection, err := websocket.Accept(response, request, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
 		return
 	}
 	defer connection.CloseNow()
+	if !host.trackSession(connection) {
+		_ = connection.Close(websocket.StatusGoingAway, "peer host shutting down")
+		return
+	}
+	defer host.untrackSession(connection)
 	connection.SetReadLimit(MaximumFrame)
 
 	ctx := request.Context()
@@ -119,6 +136,11 @@ func (host *Host) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	hello := *message.Hello
+	if hello.InstanceID == host.config.InstanceID {
+		host.sendProtocolError(ctx, connection, "instance_identity", "edge and host instance IDs must differ")
+		_ = connection.Close(websocket.StatusPolicyViolation, "duplicate instance identity")
+		return
+	}
 	if hello.MappingVersion != host.config.MappingVersion {
 		host.sendProtocolError(ctx, connection, "mapping_version", "the mapping version is not supported")
 		_ = connection.Close(websocket.StatusPolicyViolation, "unsupported mapping version")
@@ -147,7 +169,9 @@ func (host *Host) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	}
 
 	for {
-		message, err := readMessage(ctx, connection)
+		readContext, cancelRead := context.WithTimeout(ctx, hostIdleTimeout)
+		message, err := readMessage(readContext, connection)
+		cancelRead()
 		if err != nil {
 			return
 		}
@@ -169,6 +193,61 @@ func (host *Host) ServeHTTP(response http.ResponseWriter, request *http.Request)
 			return
 		}
 	}
+}
+
+func (host *Host) beginSession() bool {
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if host.closing {
+		return false
+	}
+	if host.sessionCount >= host.config.MaximumConnections*2 {
+		return false
+	}
+	host.sessionCount++
+	host.sessionWG.Add(1)
+	return true
+}
+
+func (host *Host) endSession() {
+	host.mu.Lock()
+	host.sessionCount--
+	host.mu.Unlock()
+	host.sessionWG.Done()
+}
+
+func (host *Host) trackSession(connection *websocket.Conn) bool {
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if host.closing {
+		return false
+	}
+	host.sessions[connection] = struct{}{}
+	return true
+}
+
+func (host *Host) untrackSession(connection *websocket.Conn) {
+	host.mu.Lock()
+	delete(host.sessions, connection)
+	host.mu.Unlock()
+}
+
+// Close rejects new sessions, closes every active WebSocket, and waits until
+// all peer handlers have stopped writing to the host sink.
+func (host *Host) Close() {
+	host.closeOnce.Do(func() {
+		host.mu.Lock()
+		host.closing = true
+		connections := make([]*websocket.Conn, 0, len(host.sessions))
+		for connection := range host.sessions {
+			connections = append(connections, connection)
+		}
+		host.mu.Unlock()
+		for _, connection := range connections {
+			connection.CloseNow()
+		}
+		host.sessionWG.Wait()
+	})
 }
 
 func validBearer(header, token string) bool {
@@ -367,7 +446,7 @@ func (host *Host) Snapshot() Snapshot {
 		nodes = append(nodes, copy)
 	}
 	sortNodes(nodes)
-	return Snapshot{Role: "host", Nodes: nodes}
+	return Snapshot{Role: "host", Enabled: true, Nodes: nodes}
 }
 
 func (host *Host) pruneNodesLocked(now time.Time) {

@@ -296,6 +296,9 @@ func (c Config) Validate() error {
 	if c.Instance.Role == RoleEdge && !c.Peer.Enabled {
 		problems = append(problems, errors.New("peer must be enabled for edge role"))
 	}
+	if c.Instance.Role == RoleEdge && c.MIDI.Enabled {
+		problems = append(problems, errors.New("midi must be disabled for edge role"))
+	}
 	if c.Peer.Enabled {
 		if c.Instance.Role == RoleEdge || c.Peer.URL != "" {
 			parsed, err := url.Parse(c.Peer.URL)

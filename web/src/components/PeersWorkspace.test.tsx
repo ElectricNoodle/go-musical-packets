@@ -7,6 +7,7 @@ import { PeersWorkspace } from './PeersWorkspace'
 
 const edge: PeersDocument = {
   role: 'edge',
+  enabled: true,
   outbound: {
     enabled: true, target: 'wss://host.example/api/v1/peer', remote_instance: 'host-1', state: 'connected',
     protocol_version: 'peer-v1', mapping_version: 'flow-mode-v1', queue: { depth: 3, capacity: 128 },
@@ -19,6 +20,7 @@ const edge: PeersDocument = {
 
 const host: PeersDocument = {
   role: 'host',
+  enabled: true,
   nodes: [{
     instance_id: 'edge-kitchen', remote_address: '192.0.2.4:53000', state: 'connected', authenticated: true,
     protocol_version: 'peer-v1', mapping_version: 'flow-mode-v1', connected_at: '2026-07-22T10:00:00Z',
@@ -33,6 +35,14 @@ const host: PeersDocument = {
 }
 
 describe('peer workspace', () => {
+	it('distinguishes a disabled host transport from an empty connected-node set', async () => {
+		const client = stubClient({ getPeers: vi.fn().mockResolvedValue({ role: 'host', enabled: false, nodes: [] }) })
+		render(<PeersWorkspace client={client} />)
+
+		expect(await screen.findByText('Host transport is disabled.')).toBeInTheDocument()
+		expect(screen.queryByText('No edge nodes connected')).not.toBeInTheDocument()
+	})
+
   it('shows an edge destination, bounded queue, delivery totals, and channels', async () => {
     const client = stubClient({ getPeers: vi.fn().mockResolvedValue(edge) })
     render(<PeersWorkspace client={client} />)

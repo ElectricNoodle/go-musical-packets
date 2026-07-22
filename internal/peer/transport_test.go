@@ -91,6 +91,9 @@ func TestEdgeAndHostExchangeAuthenticatedNote(t *testing.T) {
 	}
 	eventually(t, func() bool { return edge.Snapshot().Outbound.DroppedStale == 1 })
 
+	host.Close()
+	eventually(t, func() bool { return host.Snapshot().Nodes[0].State == "disconnected" })
+	host.Close() // idempotent
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatalf("Run() error = %v", err)

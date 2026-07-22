@@ -12,7 +12,7 @@ func (backend *managementBackend) Peers(ctx context.Context) (managementapi.Peer
 		return managementapi.PeersDocument{}, err
 	}
 	snapshot := backend.peers.Snapshot()
-	document := managementapi.PeersDocument{Role: snapshot.Role, Nodes: make([]managementapi.ConnectedNode, 0, len(snapshot.Nodes))}
+	document := managementapi.PeersDocument{Role: snapshot.Role, Enabled: snapshot.Enabled, Nodes: make([]managementapi.ConnectedNode, 0, len(snapshot.Nodes))}
 	if snapshot.Outbound != nil {
 		outbound := snapshot.Outbound
 		document.Outbound = &managementapi.OutboundPeer{

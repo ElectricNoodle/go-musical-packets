@@ -343,7 +343,7 @@ Pure domain packages do not depend directly on Prometheus.
 
 ## Delivery stages
 
-Stages 1 through 13 are implemented. Frontend foundations, the setup assistant,
+Stages 1 through 14 are implemented. Frontend foundations, the setup assistant,
 and the bounded flow table with
 temporary mute/solo controls, observed rates, and authoritative rule/musical
 annotations are implemented. Exact-flow pinning and constrained generalized
@@ -354,7 +354,11 @@ changing the active runtime generation. The bounded piano roll, musical viewer,
 and scheduler-accepted local event stream are implemented. The authenticated
 bounded peer protocol, reconnecting edge sender, host receiver, peer metrics,
 management snapshots, role-aware peer workspace, and viewer origin filter are
-implemented. Host/edge runtime composition is the current stage-14 frontier.
+implemented. Edge capture now feeds the reconnecting sender, host peers feed the
+coordinated MIDI runtime, host-local capture shares that scheduler, and role
+setup, readiness, feedback exclusion, and ordered shutdown are composed. The
+security, accessibility, profiling, soak, packaging, and operations work is the
+current stage-15 frontier.
 
 1. Architecture record and exact behavioral specification.
 2. Go foundations, config, logging, lifecycle, build metadata, and CI.

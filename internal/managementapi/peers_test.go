@@ -12,7 +12,7 @@ import (
 func TestPeersGetAndHead(t *testing.T) {
 	now := time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC)
 	want := PeersDocument{
-		Role: "host",
+		Role: "host", Enabled: true,
 		Nodes: []ConnectedNode{{
 			InstanceID: "edge-1", RemoteAddress: "192.0.2.4:53000", State: "connected", Authenticated: true,
 			ProtocolVersion: "peer-v1", MappingVersion: "flow-mode-v1", ConnectedAt: now, LastSeenAt: now,

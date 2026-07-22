@@ -49,7 +49,7 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	case "_midi-helper":
 		return midi.RunHelper(args[1:], os.Stdin, stdout, stderr)
 	case "run":
-		return runStandalone(ctx, args[1:], stdout, stderr)
+		return runService(ctx, args[1:], stdout, stderr)
 	case "replay":
 		return runReplay(ctx, args[1:], stdout, stderr)
 	case "validate-config":
@@ -75,7 +75,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: musical-packets <command>")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "commands:")
-	fmt.Fprintln(w, "  run              run the standalone capture-to-MIDI service")
+	fmt.Fprintln(w, "  run              run the configured standalone, edge, or host service")
 	fmt.Fprintln(w, "  replay           replay a PCAP file through the MIDI pipeline")
 	fmt.Fprintln(w, "  validate-config  validate a YAML configuration file")
 	fmt.Fprintln(w, "  interfaces       list packet-capture interfaces")
@@ -108,7 +108,7 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	return 0
 }
 
-func runStandalone(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+func runService(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	path, code := configPath("run", args, stdout, stderr)
 	if code >= 0 {
 		return code
@@ -125,18 +125,19 @@ func runStandalone(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	configuration := snapshot.Config
 	logger := applicationLogger(configuration.Logging, stderr)
-	logger.Info("starting standalone service",
+	logger.Info("starting musical-packets service",
 		"instance", configuration.Instance.ID,
+		"role", configuration.Instance.Role,
 		"listen_address", configuration.Server.ListenAddress,
 	)
 	if err := app.RunWithOptions(ctx, configuration, app.RunOptions{
 		ConfigPath:       path,
 		ExpectedRevision: snapshot.Revision,
 	}); err != nil {
-		logger.Error("standalone service stopped", "error", err)
+		logger.Error("musical-packets service stopped", "error", err)
 		return 1
 	}
-	logger.Info("standalone service stopped")
+	logger.Info("musical-packets service stopped", "role", configuration.Instance.Role)
 	return 0
 }
 

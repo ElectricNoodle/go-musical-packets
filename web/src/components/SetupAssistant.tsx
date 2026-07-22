@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { ApiError, type ManagementClient } from '../api/client'
-import type { Configuration, FlowState, RuntimeSnapshot, Validation } from '../api/types'
+import type { Configuration, FlowState, RuntimeRole, RuntimeSnapshot, Validation } from '../api/types'
 
-const steps = ['Capture', 'MIDI', 'Safety', 'Review'] as const
+const steps = ['Node', 'Capture', 'MIDI', 'Safety', 'Review'] as const
 type Step = (typeof steps)[number]
 
 interface SetupAssistantProps {
@@ -31,6 +31,8 @@ export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupA
   const [busy, setBusy] = useState<'validate' | 'apply' | 'stage' | 'cancel' | 'audition' | null>(null)
   const step = steps[stepIndex] as Step
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(baseline), [baseline, draft])
+	const peerTokenActive = draft.peer.token === '<redacted>'
+	const peerURLActive = draft.peer.url === 'wss://redacted.invalid/'
 
   const change = (mutate: (next: Configuration) => void) => {
     setDraft((current) => {
@@ -120,7 +122,7 @@ export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupA
         <div>
           <span className="eyebrow">Stage 11 · setup assistant</span>
           <h1 id="setup-title">Shape traffic into an instrument.</h1>
-          <p>Configure the signal path in four deliberate passes. Nothing is applied until validation succeeds.</p>
+          <p>Configure the runtime role and signal path in five deliberate passes. Nothing is applied until validation succeeds.</p>
         </div>
         <div className="revision" title={snapshot.pending?.revision ?? snapshot.status.revision}>
           <span>{snapshot.pending ? 'next start' : 'revision'}</span>
@@ -144,10 +146,71 @@ export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupA
       </nav>
 
       <div className="assistant__body">
+		{step === 'Node' && (
+			<div className="step-panel">
+				<div className="section-heading">
+					<span className="section-index">01</span>
+					<div><h2>Choose this node's job</h2><p>Roles decide whether accepted notes stay local, travel to a host, or arrive from edge senders.</p></div>
+				</div>
+				<div className="field-grid">
+					<label className="field">
+						<span>Instance identity</span>
+						<input value={draft.instance.id} onChange={(event) => change((next) => { next.instance.id = event.target.value })} spellCheck={false} />
+						<small>This stable identity appears in peer handshakes and viewer source filters.</small>
+					</label>
+					<label className="field">
+						<span>Runtime role</span>
+						<select value={draft.instance.role} onChange={(event) => change((next) => {
+							const role = event.target.value as RuntimeRole
+							next.instance.role = role
+							if (role === 'edge') { next.peer.enabled = true; next.midi.enabled = false }
+							if (role === 'host') next.peer.enabled = true
+							if (role === 'standalone') next.peer.enabled = false
+						})}>
+							<option value="standalone">Standalone · capture to local MIDI</option>
+							<option value="edge">Edge · capture and send</option>
+							<option value="host">Host · receive and play</option>
+						</select>
+						<small>Role changes are saved for restart.</small>
+					</label>
+					<label className="field field--wide">
+						<span>HTTP listen address</span>
+						<input value={draft.server.listen_address} onChange={(event) => change((next) => { next.server.listen_address = event.target.value })} spellCheck={false} />
+						<small>{draft.instance.role === 'host' ? 'Use a reachable address such as 0.0.0.0:8080 for edge connections; management and the UI still reject non-local clients.' : 'The local UI, probes, metrics, and management API share this listener.'}</small>
+					</label>
+					{draft.instance.role !== 'standalone' && <>
+						<label className="toggle-card">
+							<span><strong>Peer transport</strong><small>{draft.instance.role === 'edge' ? 'Required for an edge sender.' : 'Accept authenticated edge connections on the HTTP listener.'}</small></span>
+							<input type="checkbox" checked={draft.peer.enabled} disabled={draft.instance.role === 'edge'} onChange={(event) => change((next) => { next.peer.enabled = event.target.checked })} />
+							<i aria-hidden="true" />
+						</label>
+						{draft.instance.role === 'edge' && <label className="field field--wide">
+							<span>Host WebSocket URL</span>
+							<input value={draft.peer.url} disabled={peerURLActive} onChange={(event) => change((next) => { next.peer.url = event.target.value })} placeholder="wss://host.example/api/v1/peer" spellCheck={false} />
+							<small>{peerURLActive ? 'The active URL is write-only. Change it in the configuration file while the service is stopped.' : 'The edge resolves and excludes this endpoint from capture before starting.'}</small>
+						</label>}
+						<label className="field">
+							<span>Peer bearer token</span>
+							<input type="password" value={draft.peer.token} disabled={peerTokenActive} onChange={(event) => change((next) => { next.peer.token = event.target.value })} autoComplete="new-password" />
+							<small>{peerTokenActive ? 'The active token is write-only. Rotate it offline on every participating node.' : 'Use the same secret on the edge and host; at least 16 bytes are required.'}</small>
+						</label>
+						<label className="field">
+							<span>{draft.instance.role === 'edge' ? 'Outgoing queue capacity' : 'Maximum edge connections'}</span>
+							<input type="number" min="1" max={draft.instance.role === 'host' ? 1024 : undefined} value={draft.instance.role === 'edge' ? draft.peer.queue_capacity : draft.peer.maximum_connections} onChange={(event) => change((next) => {
+								if (next.instance.role === 'edge') next.peer.queue_capacity = Number(event.target.value)
+								else next.peer.maximum_connections = Number(event.target.value)
+							})} />
+							<small>{draft.instance.role === 'edge' ? 'Capture never waits for the network when this bounded queue is full.' : 'Additional authenticated handshakes are rejected when capacity is reached.'}</small>
+						</label>
+					</>}
+				</div>
+			</div>
+		)}
+
         {step === 'Capture' && (
           <div className="step-panel">
             <div className="section-heading">
-              <span className="section-index">01</span>
+              <span className="section-index">02</span>
               <div><h2>Choose the signal</h2><p>Capture stays silent by default; observed flows become visible before they become musical.</p></div>
             </div>
             <div className="field-grid">
@@ -172,7 +235,7 @@ export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupA
               <label className="field field--wide">
                 <span>Broad capture filter</span>
                 <input value={draft.capture.bpf} onChange={(event) => change((next) => { next.capture.bpf = event.target.value })} placeholder="ip or ip6" spellCheck={false} />
-                <small>Use a libpcap BPF expression. Application HTTP traffic is excluded automatically.</small>
+                <small>Use a libpcap BPF expression. Application HTTP and edge peer traffic are excluded automatically.</small>
               </label>
             </div>
             <div className="device-list" aria-label="Discovered capture interfaces">
@@ -189,13 +252,13 @@ export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupA
         {step === 'MIDI' && (
           <div className="step-panel">
             <div className="section-heading">
-              <span className="section-index">02</span>
+              <span className="section-index">03</span>
               <div><h2>Choose the voice</h2><p>The runtime reconnects automatically and always owns Note Off scheduling.</p></div>
             </div>
             <div className="field-grid">
               <label className="toggle-card">
                 <span><strong>MIDI output</strong><small>Send accepted notes to a local physical or virtual port.</small></span>
-                <input type="checkbox" checked={draft.midi.enabled} onChange={(event) => change((next) => { next.midi.enabled = event.target.checked })} />
+                <input type="checkbox" checked={draft.midi.enabled} disabled={draft.instance.role === 'edge'} onChange={(event) => change((next) => { next.midi.enabled = event.target.checked })} />
                 <i aria-hidden="true" />
               </label>
               <label className="field">
@@ -226,7 +289,7 @@ export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupA
         {step === 'Safety' && (
           <div className="step-panel">
             <div className="section-heading">
-              <span className="section-index">03</span>
+              <span className="section-index">04</span>
               <div><h2>Set the guardrails</h2><p>Bounded queues and musical limits keep traffic bursts expressive rather than destructive.</p></div>
             </div>
             <div className="field-grid field-grid--three">
@@ -262,7 +325,7 @@ export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupA
         {step === 'Review' && (
           <div className="step-panel">
             <div className="section-heading">
-              <span className="section-index">04</span>
+              <span className="section-index">05</span>
               <div><h2>Validate before applying</h2><p>The Go backend remains authoritative. Validation uses the same strict rules as startup.</p></div>
             </div>
             <div className="review-grid">
@@ -271,6 +334,7 @@ export function SetupAssistant({ client, snapshot, onApplied, announce }: SetupA
                 <div><dt>Capture</dt><dd>{draft.capture.enabled ? draft.capture.interface : 'disabled'}</dd></div>
                 <div><dt>Default action</dt><dd>{draft.mapping.default_state} · channel {draft.mapping.default_channel}</dd></div>
                 <div><dt>MIDI</dt><dd>{draft.midi.enabled ? draft.midi.exact_device_name || 'first usable output' : 'disabled'}</dd></div>
+				<div><dt>Peer</dt><dd>{draft.instance.role === 'edge' ? draft.peer.url || 'host URL required' : draft.instance.role === 'host' ? draft.peer.enabled ? `up to ${draft.peer.maximum_connections} edges` : 'disabled' : 'not used'}</dd></div>
                 <div><dt>Safety</dt><dd>{draft.performance.maximum_notes_per_second} notes/s · {draft.performance.maximum_polyphony} voices</dd></div>
               </dl>
               <div className="validation-card" aria-live="polite">

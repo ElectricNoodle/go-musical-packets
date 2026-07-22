@@ -43,13 +43,14 @@ func TestEdgeRequiresValidPeer(t *testing.T) {
 	config := Default()
 	config.Instance.Role = RoleEdge
 
-	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "peer must be enabled") {
-		t.Fatalf("Validate() error = %v, want peer requirement", err)
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "peer must be enabled") || !strings.Contains(err.Error(), "midi must be disabled") {
+		t.Fatalf("Validate() error = %v, want peer and MIDI role requirements", err)
 	}
 
 	config.Peer.Enabled = true
 	config.Peer.URL = "wss://host.example/v1/notes"
 	config.Peer.Token = "sixteen-byte-token"
+	config.MIDI.Enabled = false
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
@@ -84,6 +85,7 @@ func TestValidateRejectsUnsafePeerSettings(t *testing.T) {
 			config.Peer.Enabled = true
 			config.Peer.URL = "wss://host.example/api/v1/peer"
 			config.Peer.Token = "sixteen-byte-token"
+			config.MIDI.Enabled = false
 			test.mutate(&config)
 			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Validate() error = %v, want %q", err, test.want)

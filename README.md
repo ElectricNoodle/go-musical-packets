@@ -8,7 +8,7 @@ The accepted architecture and delivery plan is in [docs/PLAN.md](docs/PLAN.md).
 
 ## Development status
 
-Delivery stages 1 through 13 are implemented. The local management API includes
+Delivery stages 1 through 14 are implemented. The local management API includes
 transactional configuration, capture-interface and MIDI discovery, MIDI
 audition and panic, bounded flow snapshots, temporary mute/solo controls, and
 ordered persistent-rule mutations. The embedded React/TypeScript foundation
@@ -23,10 +23,11 @@ and atomic import/export. Restart-required drafts can be durably saved without
 changing the active process, then revised or discarded before restart. The
 `/viewer` workspace now renders scheduler-accepted notes in a bounded live
 piano roll with keyboard, channel, mapping, rate, and accessible event views.
-The authenticated bounded peer protocol, edge sender, host receiver, peer
-metrics and management snapshots, role-aware `/peers` workspace, and
-viewer-by-origin navigation are implemented. Host/edge runtime composition is
-next.
+The authenticated bounded peer protocol is composed into real edge and host
+processes with reconnecting delivery, host-owned MIDI scheduling, live peer
+management snapshots, role-aware `/peers` views, viewer-by-origin navigation,
+and automatic capture exclusions for peer traffic. Security, accessibility,
+soak testing, packaging, and operations are next.
 
 ## Commands
 

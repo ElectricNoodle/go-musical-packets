@@ -22,7 +22,7 @@ func TestManagementPeersConvertsDetachedRuntimeSnapshot(t *testing.T) {
 	backend := newTestManagementBackend(controller, &ready, context.Background())
 	now := time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC)
 	backend.peers = testPeerSnapshotter{snapshot: peer.Snapshot{
-		Role: "host",
+		Role: "host", Enabled: true,
 		Nodes: []peer.NodeSnapshot{{
 			InstanceID: "edge-1", RemoteAddress: "192.0.2.4:53000", State: "connected", Authenticated: true,
 			ProtocolVersion: peer.ProtocolVersion, MappingVersion: "flow-mode-v1", ConnectedAt: now, LastSeenAt: now,
@@ -33,7 +33,7 @@ func TestManagementPeersConvertsDetachedRuntimeSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Peers() error = %v", err)
 	}
-	if document.Role != "host" || len(document.Nodes) != 1 || document.Nodes[0].AcceptedTotal != 3 || !reflect.DeepEqual(document.Nodes[0].ActiveChannels, []uint8{2, 13}) {
+	if document.Role != "host" || !document.Enabled || len(document.Nodes) != 1 || document.Nodes[0].AcceptedTotal != 3 || !reflect.DeepEqual(document.Nodes[0].ActiveChannels, []uint8{2, 13}) {
 		t.Fatalf("Peers() = %#v", document)
 	}
 	document.Nodes[0].ActiveChannels[0] = 16

@@ -1,4 +1,4 @@
-// Package app composes the standalone musical-packets runtime.
+// Package app composes standalone, edge, and host musical-packets runtimes.
 package app
 
 import (
@@ -20,6 +20,7 @@ import (
 	"github.com/ElectricNoodle/go-musical-packets/internal/metrics"
 	"github.com/ElectricNoodle/go-musical-packets/internal/midi"
 	"github.com/ElectricNoodle/go-musical-packets/internal/music"
+	"github.com/ElectricNoodle/go-musical-packets/internal/peer"
 	"github.com/ElectricNoodle/go-musical-packets/internal/pipeline"
 	"github.com/ElectricNoodle/go-musical-packets/internal/uistream"
 	"github.com/ElectricNoodle/go-musical-packets/internal/webui"
@@ -42,13 +43,14 @@ type Dependencies struct {
 	OpenConfigRepository func(path string) (ConfigRepository, error)
 	NewMIDIDriver        func() (midi.Driver, error)
 	Listen               func(network, address string) (net.Listener, error)
+	LookupIP             func(context.Context, string) ([]net.IP, error)
 	ReplayNow            func() time.Time
 	ReplayWait           func(context.Context, time.Duration) error
 	ReplayObserver       pipeline.Observer
 	WebHandler           http.Handler
 }
 
-// RunOptions selects optional standalone-runtime capabilities. Supplying a
+// RunOptions selects optional runtime capabilities. Supplying a
 // config path makes that repository authoritative and enables persisted hot
 // configuration updates. The zero value retains the legacy read-only runtime.
 type RunOptions struct {
@@ -77,6 +79,11 @@ func (dependencies Dependencies) withDefaults() Dependencies {
 	if dependencies.Listen == nil {
 		dependencies.Listen = net.Listen
 	}
+	if dependencies.LookupIP == nil {
+		dependencies.LookupIP = func(ctx context.Context, host string) ([]net.IP, error) {
+			return net.DefaultResolver.LookupIP(ctx, "ip", host)
+		}
+	}
 	if dependencies.ReplayNow == nil {
 		dependencies.ReplayNow = time.Now
 	}
@@ -89,8 +96,8 @@ func (dependencies Dependencies) withDefaults() Dependencies {
 	return dependencies
 }
 
-// Run validates and runs a standalone node until cancellation or a terminal
-// component result. Context cancellation is a normal, successful shutdown.
+// Run validates and runs the configured runtime role until cancellation or a
+// terminal component result. Context cancellation is a normal shutdown.
 func Run(ctx context.Context, configuration config.Config) error {
 	return RunWithOptionsAndDependencies(ctx, configuration, RunOptions{}, Dependencies{})
 }
@@ -146,12 +153,6 @@ func RunWithOptionsAndDependencies(
 		})
 	}
 	configuration = initialPolicy.Config
-	if configuration.Instance.Role != config.RoleStandalone {
-		return fmt.Errorf("run standalone: instance role %q is unsupported", configuration.Instance.Role)
-	}
-	if configuration.Peer.Enabled {
-		return errors.New("run standalone: peer transport is unsupported")
-	}
 	if err := ctx.Err(); err != nil {
 		return nil
 	}
@@ -162,6 +163,7 @@ func RunWithOptionsAndDependencies(
 	}
 	viewerStream := uistream.New(configuration.Performance.UIQueueCapacity, bundle.UI)
 	var manager *midi.Manager
+	var peers runtimePeers
 	var runtimeReady atomic.Bool
 	readiness := func(context.Context) error {
 		if !runtimeReady.Load() {
@@ -177,6 +179,12 @@ func RunWithOptionsAndDependencies(
 			}
 			if _, connected := manager.Current(); !connected {
 				return midi.ErrOutputUnavailable
+			}
+		}
+		if peers.edge != nil {
+			outbound := peers.edge.Snapshot().Outbound
+			if outbound == nil || outbound.State != "connected" {
+				return errors.New("peer host is unavailable")
 			}
 		}
 		return nil
@@ -196,9 +204,21 @@ func RunWithOptionsAndDependencies(
 	if err != nil {
 		return fmt.Errorf("resolve HTTP listener port: %w", err)
 	}
+	var capturePeer *peerCaptureEndpoint
 	if configuration.Capture.Enabled {
+		if configuration.Instance.Role == config.RoleEdge {
+			resolved, resolveErr := resolvePeerCaptureEndpoint(ctx, configuration.Peer.URL, dependencies.LookupIP)
+			if resolveErr != nil {
+				return fmt.Errorf("resolve peer capture exclusion: %w", resolveErr)
+			}
+			capturePeer = &resolved
+		}
 		if err := controller.configureSafety(func(userRules []flow.Rule) []flow.Rule {
-			return httpSafetyRules(httpPort, userRules)
+			rules := httpSafetyRules(httpPort, userRules)
+			if capturePeer != nil {
+				rules = append(rules, peerSafetyRules(*capturePeer, append(userRules, rules...))...)
+			}
+			return rules
 		}); err != nil {
 			return fmt.Errorf("configure capture safety policy: %w", err)
 		}
@@ -211,7 +231,6 @@ func RunWithOptionsAndDependencies(
 	if err != nil {
 		return fmt.Errorf("initialize HTTP handler: %w", err)
 	}
-	var handler http.Handler = operationalHandler
 	managementContext, cancelManagement := context.WithCancel(ctx)
 	defer cancelManagement()
 
@@ -244,78 +263,97 @@ func RunWithOptionsAndDependencies(
 			return errors.Join(closeErr, normalizeComponentError(managerErr))
 		}
 	}
-	if listenerIsLoopback(listener.Addr()) {
-		managementBackend, managementErr := newManagementBackend(
-			controller,
-			processing.registry,
-			dependencies.Interfaces,
-			acceptedMIDI,
-			&runtimeReady,
-			managementContext,
-		)
-		if managementErr != nil {
-			return shutdownStartup(
-				fmt.Errorf("initialize management backend: %w", managementErr),
-				midiRuntime,
-				managerCancel,
-				managerDone,
-			)
-		}
-		managementHandler, managementErr := managementapi.NewHandler(
-			managementBackend,
-			managementapi.Options{AllowedPort: httpPort, Observer: bundle.Management},
-		)
-		if managementErr != nil {
-			return shutdownStartup(
-				fmt.Errorf("initialize management API: %w", managementErr),
-				midiRuntime,
-				managerCancel,
-				managerDone,
-			)
-		}
-		eventHandler := uistream.NewHandler(managementContext, viewerStream, httpPort)
-		handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			if request.URL.EscapedPath() == "/api/v1/events" {
-				eventHandler.ServeHTTP(response, request)
-				return
-			}
-			if request.URL.Path == "/api" || strings.HasPrefix(request.URL.Path, "/api/") {
-				managementHandler.ServeHTTP(response, request)
-				return
-			}
-			switch request.URL.Path {
-			case "/metrics", "/healthz", "/readyz":
-				operationalHandler.ServeHTTP(response, request)
-			default:
-				dependencies.WebHandler.ServeHTTP(response, request)
-			}
-		})
+	hostSink := pipeline.Sink(discardSink{})
+	if acceptedMIDI != nil {
+		hostSink = acceptedMIDI
 	}
+	peers, err = newRuntimePeers(configuration, bundle, hostSink)
+	if err != nil {
+		return shutdownStartup(err, nil, midiRuntime, managerCancel, managerDone)
+	}
+	managementBackend, managementErr := newManagementBackend(
+		controller,
+		processing.registry,
+		dependencies.Interfaces,
+		acceptedMIDI,
+		&runtimeReady,
+		managementContext,
+	)
+	if managementErr != nil {
+		return shutdownStartup(
+			fmt.Errorf("initialize management backend: %w", managementErr),
+			peers.host,
+			midiRuntime,
+			managerCancel,
+			managerDone,
+		)
+	}
+	managementBackend.peers = peers.snapshotter
+	managementHandler, managementErr := managementapi.NewHandler(
+		managementBackend,
+		managementapi.Options{AllowedPort: httpPort, Observer: bundle.Management},
+	)
+	if managementErr != nil {
+		return shutdownStartup(
+			fmt.Errorf("initialize management API: %w", managementErr),
+			peers.host,
+			midiRuntime,
+			managerCancel,
+			managerDone,
+		)
+	}
+	eventHandler := uistream.NewHandler(managementContext, viewerStream, httpPort)
+	handler := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if peers.host != nil && request.URL.EscapedPath() == peer.Path {
+			peers.host.ServeHTTP(response, request)
+			return
+		}
+		if request.URL.EscapedPath() == "/api/v1/events" {
+			eventHandler.ServeHTTP(response, request)
+			return
+		}
+		if request.URL.Path == "/api" || strings.HasPrefix(request.URL.Path, "/api/") {
+			managementHandler.ServeHTTP(response, request)
+			return
+		}
+		switch request.URL.Path {
+		case "/metrics", "/healthz", "/readyz":
+			operationalHandler.ServeHTTP(response, request)
+		default:
+			if !requestIsLoopback(request) {
+				http.NotFound(response, request)
+				return
+			}
+			dependencies.WebHandler.ServeHTTP(response, request)
+		}
+	})
 
 	var source capture.Source
 	var processor *pipeline.Processor
 	if configuration.Capture.Enabled {
 		interfaces, interfacesErr := dependencies.Interfaces()
 		if interfacesErr != nil {
-			return shutdownStartup(fmt.Errorf("list capture interfaces: %w", interfacesErr), midiRuntime, managerCancel, managerDone)
+			return shutdownStartup(fmt.Errorf("list capture interfaces: %w", interfacesErr), peers.host, midiRuntime, managerCancel, managerDone)
 		}
 		selected, selectErr := capture.SelectInterface(interfaces, configuration.Capture.Interface)
 		if selectErr != nil {
-			return shutdownStartup(fmt.Errorf("select capture interface: %w", selectErr), midiRuntime, managerCancel, managerDone)
+			return shutdownStartup(fmt.Errorf("select capture interface: %w", selectErr), peers.host, midiRuntime, managerCancel, managerDone)
 		}
 		source, err = dependencies.OpenLive(capture.LiveConfig{
 			Device:         selected.Name,
 			SnapshotLength: configuration.Capture.SnapshotLength,
 			Promiscuous:    configuration.Capture.Promiscuous,
 			Timeout:        captureReadTimeout,
-			BPF:            captureBPF(configuration.Capture.BPF, httpPort),
+			BPF:            captureBPFWithPeer(configuration.Capture.BPF, httpPort, capturePeer),
 		})
 		if err != nil {
-			return shutdownStartup(fmt.Errorf("open live capture: %w", err), midiRuntime, managerCancel, managerDone)
+			return shutdownStartup(fmt.Errorf("open live capture: %w", err), peers.host, midiRuntime, managerCancel, managerDone)
 		}
 
 		sink := pipeline.Sink(discardSink{})
-		if acceptedMIDI != nil {
+		if peers.edge != nil {
+			sink = &viewerSink{sink: peers.edge, stream: viewerStream}
+		} else if acceptedMIDI != nil {
 			sink = acceptedMIDI
 		}
 		processor, err = newProcessor(configuration, processing, source, sink, viewerPipelineObserver{
@@ -324,7 +362,7 @@ func RunWithOptionsAndDependencies(
 		})
 		if err != nil {
 			pipelineErr := errors.Join(err, source.Close())
-			return shutdownStartup(pipelineErr, midiRuntime, managerCancel, managerDone)
+			return shutdownStartup(pipelineErr, peers.host, midiRuntime, managerCancel, managerDone)
 		}
 	}
 
@@ -337,6 +375,15 @@ func RunWithOptionsAndDependencies(
 	listenerOwnedByServer = true
 	go func() { serverDone <- server.Serve(listener) }()
 
+	var edgeCancel context.CancelFunc
+	var edgeDone chan error
+	if peers.edge != nil {
+		edgeContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		edgeCancel = cancel
+		edgeDone = make(chan error, 1)
+		go func() { edgeDone <- peers.edge.Run(edgeContext) }()
+	}
+
 	var processorCancel context.CancelFunc
 	var processorDone chan error
 	if processor != nil {
@@ -347,7 +394,11 @@ func RunWithOptionsAndDependencies(
 	}
 	runtimeReady.Store(true)
 
-	return supervise(ctx, configuration.Server.WriteTimeout, server, serverDone, &runtimeReady, cancelManagement, processorCancel, processorDone, midiRuntime, managerCancel, managerDone)
+	return supervise(
+		ctx, configuration.Server.WriteTimeout, server, serverDone, &runtimeReady, cancelManagement,
+		processorCancel, processorDone, edgeCancel, edgeDone, peers.host,
+		midiRuntime, managerCancel, managerDone,
+	)
 }
 
 type discardSink struct{}
@@ -372,9 +423,13 @@ func listenerPort(address net.Addr) (uint16, error) {
 	return uint16(port), nil
 }
 
-func listenerIsLoopback(address net.Addr) bool {
-	tcpAddress, ok := address.(*net.TCPAddr)
-	return ok && tcpAddress.IP.IsLoopback()
+func requestIsLoopback(request *http.Request) bool {
+	host, _, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
 func httpSafetyRules(port uint16, existing []flow.Rule) []flow.Rule {
@@ -425,7 +480,10 @@ func captureBPF(configured string, port uint16) string {
 	return fmt.Sprintf("(%s) and (%s)", configured, exclusion)
 }
 
-func shutdownStartup(startupErr error, midiRuntime *midi.Runtime, managerCancel context.CancelFunc, managerDone <-chan error) error {
+func shutdownStartup(startupErr error, host *peer.Host, midiRuntime *midi.Runtime, managerCancel context.CancelFunc, managerDone <-chan error) error {
+	if host != nil {
+		host.Close()
+	}
 	closeErr := closeMIDIRuntime(midiRuntime)
 	var managerErr error
 	if managerCancel != nil {
@@ -444,35 +502,33 @@ func supervise(
 	cancelManagement context.CancelFunc,
 	processorCancel context.CancelFunc,
 	processorDone <-chan error,
+	edgeCancel context.CancelFunc,
+	edgeDone <-chan error,
+	host *peer.Host,
 	midiRuntime *midi.Runtime,
 	managerCancel context.CancelFunc,
 	managerDone <-chan error,
 ) error {
 	var result error
 	processorFinished := processorDone == nil
+	edgeFinished := edgeDone == nil
 	managerFinished := managerDone == nil
 	serverFinished := false
 
-	if processorDone == nil && managerDone == nil {
-		select {
-		case <-ctx.Done():
-		case serverErr := <-serverDone:
-			serverFinished = true
-			result = componentStopped("HTTP server", normalizeHTTPError(serverErr))
-		}
-	} else {
-		select {
-		case <-ctx.Done():
-		case processorErr := <-processorDone:
-			processorFinished = true
-			result = componentStopped("packet pipeline", processorErr)
-		case managerErr := <-managerDone:
-			managerFinished = true
-			result = componentStopped("MIDI manager", managerErr)
-		case serverErr := <-serverDone:
-			serverFinished = true
-			result = componentStopped("HTTP server", normalizeHTTPError(serverErr))
-		}
+	select {
+	case <-ctx.Done():
+	case processorErr := <-processorDone:
+		processorFinished = true
+		result = componentStopped("packet pipeline", processorErr)
+	case edgeErr := <-edgeDone:
+		edgeFinished = true
+		result = componentStopped("edge peer", edgeErr)
+	case managerErr := <-managerDone:
+		managerFinished = true
+		result = componentStopped("MIDI manager", managerErr)
+	case serverErr := <-serverDone:
+		serverFinished = true
+		result = componentStopped("HTTP server", normalizeHTTPError(serverErr))
 	}
 
 	runtimeReady.Store(false)
@@ -484,6 +540,15 @@ func supervise(
 	}
 	if !processorFinished {
 		result = errors.Join(result, normalizeComponentError(<-processorDone))
+	}
+	if edgeCancel != nil {
+		edgeCancel()
+	}
+	if !edgeFinished {
+		result = errors.Join(result, normalizeComponentError(<-edgeDone))
+	}
+	if host != nil {
+		host.Close()
 	}
 	result = errors.Join(result, closeMIDIRuntime(midiRuntime))
 	if managerCancel != nil {

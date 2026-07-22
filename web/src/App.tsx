@@ -135,7 +135,7 @@ export default function App({ client: suppliedClient }: AppProps) {
       <main className="workspace">
         {snapshot.status.warning && <div className="warning-banner" role="status">{snapshot.status.warning}</div>}
         {view === 'setup' && <SetupAssistant key={`${snapshot.config.revision}:${snapshot.pending?.revision ?? ''}`} client={client} snapshot={snapshot} onApplied={() => load()} announce={announce} />}
-        {view === 'viewer' && <Suspense fallback={<div className="viewer-loading" aria-busy="true">Preparing the live piano roll…</div>}><MusicalViewer /></Suspense>}
+        {view === 'viewer' && <Suspense fallback={<div className="viewer-loading" aria-busy="true">Preparing the live piano roll…</div>}><MusicalViewer role={snapshot.config.config.instance.role} /></Suspense>}
         {view === 'flows' && <FlowExplorer client={client} announce={announce} onPolicyChanged={() => load()} />}
         {view === 'rules' && <RulesEditor client={client} announce={announce} onPolicyChanged={() => load()} />}
         {view === 'peers' && <PeersWorkspace client={client} />}

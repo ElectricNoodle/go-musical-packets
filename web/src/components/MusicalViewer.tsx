@@ -3,7 +3,7 @@ import * as echarts from 'echarts/core'
 import { CustomChart, LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import type { LiveNoteBatch, LiveNoteEvent } from '../api/types'
+import type { LiveNoteBatch, LiveNoteEvent, RuntimeRole } from '../api/types'
 
 echarts.use([CustomChart, LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 
@@ -38,7 +38,8 @@ interface ViewerSocket {
 }
 
 interface MusicalViewerProps {
-	connect?: () => ViewerSocket
+  connect?: () => ViewerSocket
+  role?: RuntimeRole
 }
 
 function streamURL() {
@@ -178,7 +179,7 @@ function RateStrip({ samples }: { samples: RateSample[] }) {
 	)
 }
 
-export function MusicalViewer({ connect = defaultConnect }: MusicalViewerProps) {
+export function MusicalViewer({ connect = defaultConnect, role = 'standalone' }: MusicalViewerProps) {
 	const [notes, setNotes] = useState<LiveNoteEvent[]>([])
 	const [rates, setRates] = useState<RateSample[]>([])
 	const [streamState, setStreamState] = useState<StreamState>('connecting')
@@ -264,8 +265,8 @@ export function MusicalViewer({ connect = defaultConnect }: MusicalViewerProps) 
 		<header className="viewer-header">
 			<div>
 				<span className="eyebrow">Live musical viewer</span>
-				<h1>See what the scheduler accepted.</h1>
-				<p>The playhead follows local playback time. Browser slowness can discard visual events, but can never delay capture or MIDI.</p>
+				<h1>{role === 'edge' ? 'See what the edge accepted for delivery.' : 'See what the scheduler accepted.'}</h1>
+				<p>{role === 'edge' ? 'The playhead follows notes admitted to the bounded outgoing queue. Delivery state and later stale drops remain authoritative in Peers.' : 'The playhead follows local playback time. Browser slowness can discard visual events, but can never delay capture or MIDI.'}</p>
 			</div>
 			<div className="viewer-controls">
 				<span className={`stream-state stream-state--${streamState}`}><i />{streamState}</span>

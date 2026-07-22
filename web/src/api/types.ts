@@ -275,6 +275,7 @@ export interface ConnectedNode {
 
 export interface PeersDocument {
   role: RuntimeRole
+  enabled: boolean
   outbound?: PeerOutbound
   nodes: ConnectedNode[]
 }

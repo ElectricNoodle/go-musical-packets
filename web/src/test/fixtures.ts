@@ -17,7 +17,7 @@ export const configuration: Configuration = {
   midi: { enabled: true, exact_device_name: '', device_name_regexp: '', poll_interval: '2s' },
   server: { listen_address: '127.0.0.1:8080', read_timeout: '10s', write_timeout: '10s' },
   peer: {
-    enabled: false, url: '<write-only-url>', token: '', queue_capacity: 1024,
+    enabled: false, url: '', token: '', queue_capacity: 1024,
     maximum_connections: 64, recent_ttl: '5m', reconnect_base: '500ms', reconnect_limit: '30s', stale_after: '500ms',
   },
   metrics: { namespace: 'musical_packets' },
@@ -81,7 +81,7 @@ export const rulesDocument: RulesDocument = {
   rules: [],
 }
 
-export const peersDocument: PeersDocument = { role: 'standalone', nodes: [] }
+export const peersDocument: PeersDocument = { role: 'standalone', enabled: false, nodes: [] }
 
 export function stubClient(overrides: Partial<ManagementClient> = {}): ManagementClient {
   return {

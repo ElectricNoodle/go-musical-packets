@@ -536,7 +536,7 @@ func TestManagementAPIRejectsConcreteSecretGuessesIdentically(t *testing.T) {
 	}
 }
 
-func TestRunMountsManagementAPIOnlyOnLoopbackListener(t *testing.T) {
+func TestRunManagementAPIEnforcesLoopbackRequestsOnEveryListener(t *testing.T) {
 	t.Run("loopback", func(t *testing.T) {
 		configuration := managementTestConfig()
 		repository := newMemoryConfigRepository(configuration)
@@ -719,8 +719,8 @@ func TestRunMountsManagementAPIOnlyOnLoopbackListener(t *testing.T) {
 		response := managementRequest(t, client, bound, http.MethodGet, "/api/v1/status", nil, nil)
 		body := readManagementBody(t, response)
 		_ = response.Body.Close()
-		if response.StatusCode != http.StatusNotFound {
-			t.Fatalf("GET non-loopback management route = %d, %q; want 404", response.StatusCode, body)
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("GET non-loopback management route = %d, %q; want 403", response.StatusCode, body)
 		}
 
 		cancel()

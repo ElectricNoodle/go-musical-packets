@@ -33,7 +33,7 @@ function ChannelBadges({ channels }: { channels: number[] }) {
 
 function EdgePeer({ document }: { document: PeersDocument }) {
   const peer = document.outbound
-  if (!peer) return <div className="peer-empty"><strong>Edge transport is not active.</strong><span>The configured destination will appear after the edge runtime is composed and started.</span></div>
+  if (!peer) return <div className="peer-empty"><strong>Edge transport is not active.</strong><span>Enable peer transport and provide a host URL in the next-start configuration.</span></div>
   const fill = peer.queue.capacity > 0 ? Math.min(100, peer.queue.depth / peer.queue.capacity * 100) : 0
   return (
     <div className="edge-peer-grid">
@@ -117,12 +117,13 @@ export function PeersWorkspace({ client }: PeersWorkspaceProps) {
 
   return (
     <section className="peers-workspace" aria-labelledby="peers-title">
-      <header className="peers-header"><div><span className="eyebrow">Stage 13 · authenticated peer transport</span><h1 id="peers-title">{document?.role === 'host' ? 'Connected instruments, clearly heard.' : document?.role === 'edge' ? 'Know exactly where the music goes.' : 'Peer transport at a glance.'}</h1><p>{document?.role === 'host' ? 'Current and recent edge nodes are bounded, authenticated, and observed without turning identities into metric labels.' : document?.role === 'edge' ? 'The configured destination, negotiated host, queue pressure, and delivery state remain visible without exposing credentials.' : 'This standalone runtime has no peer transport. Edge and host roles will expose their live connections here.'}</p></div><button type="button" className="secondary-button" onClick={() => void load()}>Refresh now</button></header>
+      <header className="peers-header"><div><span className="eyebrow">Stage 14 · composed peer runtime</span><h1 id="peers-title">{document?.role === 'host' ? 'Connected instruments, clearly heard.' : document?.role === 'edge' ? 'Know exactly where the music goes.' : 'Peer transport at a glance.'}</h1><p>{document?.role === 'host' ? 'Current and recent edge nodes are bounded, authenticated, and observed without turning identities into metric labels.' : document?.role === 'edge' ? 'The configured destination, negotiated host, queue pressure, and delivery state remain visible without exposing credentials.' : 'This standalone runtime plays locally and does not open a peer transport.'}</p></div><button type="button" className="secondary-button" onClick={() => void load()}>Refresh now</button></header>
       {error && <div className="explorer-error" role="alert"><span>{error}</span><button type="button" onClick={() => void load()}>Try again</button></div>}
       {!document && !error && <div className="peer-empty" aria-busy="true"><strong>Reading peer runtime state…</strong></div>}
       {document?.role === 'edge' && <EdgePeer document={document} />}
-      {document?.role === 'host' && <HostPeers nodes={document.nodes} />}
-      {document?.role === 'standalone' && <div className="peer-empty"><strong>No peer role is active.</strong><span>Choose edge or host configuration for the next process start when Stage 14 composition is enabled.</span></div>}
+      {document?.role === 'host' && document.enabled && <HostPeers nodes={document.nodes} />}
+      {document?.role === 'host' && !document.enabled && <div className="peer-empty"><strong>Host transport is disabled.</strong><span>Enable peer transport in Setup and save the configuration for the next process start.</span></div>}
+      {document?.role === 'standalone' && <div className="peer-empty"><strong>No peer role is active.</strong><span>Choose an edge or host role in Setup and save it for the next process start.</span></div>}
     </section>
   )
 }

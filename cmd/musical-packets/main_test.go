@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -203,15 +204,17 @@ func TestRunCommandHelpUsesStdout(t *testing.T) {
 	}
 }
 
-func TestRunRejectsFutureRuntimeRole(t *testing.T) {
-	path := writeConfiguration(t, "instance:\n  role: host\n")
+func TestRunAcceptsHostRole(t *testing.T) {
+	path := writeConfiguration(t, "instance:\n  role: host\ncapture:\n  enabled: false\nmidi:\n  enabled: false\npeer:\n  enabled: true\n  token: sixteen-byte-token\nserver:\n  listen_address: 127.0.0.1:0\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"run", "--config", path}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("run() code = %d, want 1", code)
+	code := runContext(ctx, []string{"run", "--config", path}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run() code = %d, want 0; stderr = %q", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "instance role") || !strings.Contains(stderr.String(), "host") || !strings.Contains(stderr.String(), "unsupported") {
-		t.Fatalf("run() stderr = %q, want unsupported-role error", stderr.String())
+	if !strings.Contains(stderr.String(), "role=host") {
+		t.Fatalf("run() stderr = %q, want host lifecycle log", stderr.String())
 	}
 }
 

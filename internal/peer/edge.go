@@ -214,6 +214,9 @@ func (edge *Edge) runSession(ctx context.Context) (bool, error) {
 	if reply.Type != TypeHello || reply.Hello.Role != "host" {
 		return false, errors.New("peer host did not return a host hello")
 	}
+	if reply.Hello.InstanceID == edge.config.InstanceID {
+		return false, errors.New("peer host instance ID must differ from the edge")
+	}
 
 	connectedAt := edge.config.Now().UTC()
 	edge.state.mu.Lock()
@@ -329,7 +332,7 @@ func (edge *Edge) safeError(err error) string {
 // Snapshot returns a detached operational view.
 func (edge *Edge) Snapshot() Snapshot {
 	copy := edge.state.copy(edge.config.Now().UTC(), len(edge.queue))
-	return Snapshot{Role: "edge", Outbound: &copy, Nodes: []NodeSnapshot{}}
+	return Snapshot{Role: "edge", Enabled: true, Outbound: &copy, Nodes: []NodeSnapshot{}}
 }
 
 func writeMessage(ctx context.Context, connection *websocket.Conn, message Message) error {

@@ -59,6 +59,7 @@ type ConnectedNode struct {
 // PeersDocument is a complete bounded role-aware peer snapshot.
 type PeersDocument struct {
 	Role     string          `json:"role"`
+	Enabled  bool            `json:"enabled"`
 	Outbound *OutboundPeer   `json:"outbound,omitempty"`
 	Nodes    []ConnectedNode `json:"nodes"`
 }

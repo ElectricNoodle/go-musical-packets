@@ -14,6 +14,7 @@ const maximumRateSamples = 4096
 // Snapshot is a detached role-aware view suitable for a local management API.
 type Snapshot struct {
 	Role     string
+	Enabled  bool
 	Outbound *OutboundSnapshot
 	Nodes    []NodeSnapshot
 }

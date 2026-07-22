@@ -115,7 +115,7 @@ code, .eyebrow, .step span, .revision, .section-index { font-family: 'SFMono-Reg
 .revision { display: grid; gap: 6px; text-align: right; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .12em; }
 .revision code { color: var(--acid); font-size: 11px; letter-spacing: .04em; }
 
-.stepper { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--line); margin-bottom: 36px; }
+.stepper { display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 1px solid var(--line); margin-bottom: 36px; }
 .step { position: relative; display: flex; align-items: center; gap: 10px; border: 0; padding: 14px 4px; color: #697064; background: transparent; cursor: pointer; font-size: 12px; text-align: left; }
 .step::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: transparent; }
 .step span { font-size: 9px; }

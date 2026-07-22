@@ -10,6 +10,38 @@ afterEach(() => {
 })
 
 describe('setup assistant', () => {
+	it('prepares a complete edge role and peer destination for restart', async () => {
+		const client = stubClient({
+			validateConfig: vi.fn().mockResolvedValue({
+				revision: 'public-revision',
+				hot_fields: [],
+				restart_required_fields: ['instance.role', 'midi.enabled', 'peer.enabled', 'peer.url', 'peer.token'],
+			}),
+		})
+		const user = userEvent.setup()
+		render(<App client={client} />)
+
+		await screen.findByRole('heading', { name: /choose this node's job/i })
+		await user.selectOptions(screen.getByLabelText(/runtime role/i), 'edge')
+		await user.type(screen.getByLabelText(/host websocket url/i), 'wss://music.example/api/v1/peer')
+		await user.type(screen.getByLabelText(/peer bearer token/i), 'sixteen-byte-token')
+		await user.click(screen.getByRole('button', { name: /03midi/i }))
+		expect(screen.getByRole('checkbox', { name: /midi output/i })).toBeDisabled()
+		expect(screen.getByRole('checkbox', { name: /midi output/i })).not.toBeChecked()
+		await user.click(screen.getByRole('button', { name: /review/i }))
+		await user.click(screen.getByRole('button', { name: /^validate$/i }))
+		await user.click(await screen.findByRole('button', { name: /save for restart/i }))
+
+		await waitFor(() => expect(client.stageConfig).toHaveBeenCalledWith(
+			expect.objectContaining({
+				instance: expect.objectContaining({ role: 'edge' }),
+				midi: expect.objectContaining({ enabled: false }),
+				peer: expect.objectContaining({ enabled: true, url: 'wss://music.example/api/v1/peer', token: 'sixteen-byte-token' }),
+			}),
+			'"public-revision"',
+		))
+	})
+
   it('loads runtime boundaries and applies a validated live-safe change', async () => {
     const client = stubClient({
       validateConfig: vi.fn().mockResolvedValue({
@@ -51,6 +83,7 @@ describe('setup assistant', () => {
     render(<App client={client} />)
 
     await screen.findByRole('heading', { name: /shape traffic/i })
+		await user.click(screen.getByRole('button', { name: /capture/i }))
     await user.selectOptions(screen.getByRole('combobox', { name: /^capture interface/i }), 'lo0')
     await user.click(screen.getByRole('button', { name: /review/i }))
     await user.click(screen.getByRole('button', { name: /^validate$/i }))

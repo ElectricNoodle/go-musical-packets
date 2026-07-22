@@ -41,6 +41,8 @@ server:
   write_timeout: 10s
 
 peer:
+  # Edge roles enable this, set url/token, and disable midi above.
+  # Host roles enable this, set token, and leave url empty.
   enabled: false
   url: ""
   token: ""

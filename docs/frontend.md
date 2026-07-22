@@ -5,9 +5,10 @@ production build is emitted into `internal/webui/dist` and embedded into the Go
 binary. Hashed assets receive an immutable one-year cache policy; the HTML
 shell and client-side route fallbacks are never cached.
 
-The frontend and management API are exposed only when the actual HTTP listener
-is loopback-bound. Metrics and probes retain their existing behavior on other
-listeners. The embedded handler allows GET and HEAD, applies a restrictive
+The frontend and management API are mounted on every role, but both enforce a
+loopback client boundary even when a host listener is wildcard-bound for remote
+peers. Metrics and probes retain their existing behavior. The embedded handler
+allows GET and HEAD, applies a restrictive
 Content Security Policy and browser security headers, serves real files when
 present, and falls back to `index.html` only for extensionless client routes.
 
@@ -42,6 +43,8 @@ compile from a clean checkout before Vite runs.
 The setup assistant loads status, the redacted canonical configuration,
 capture-interface discovery, and cached MIDI discovery in parallel. It covers:
 
+- instance identity, standalone/edge/host role, listen address, peer target,
+  bearer token, and role-specific capacity;
 - capture enablement, interface choice, and broad BPF editing;
 - MIDI enablement, preferred output, channel choice, audition, and panic;
 - quiet-by-default selection plus global note-rate and polyphony limits;
@@ -135,12 +138,12 @@ connection.
 
 ## Musical viewer
 
-The `/viewer` workspace consumes `WS /api/v1/events`. It displays only notes
-whose Note On was accepted by the local scheduler, including management MIDI
-auditions; rate-limited, polyphony-limited, retrigger-limited, unavailable, and
-failed writes are absent. Every event carries a server-authored acceptance time
-so the moving playhead represents local playback rather than packet-capture
-time.
+The `/viewer` workspace consumes `WS /api/v1/events`. Standalone and host views
+display only notes whose Note On was accepted by the local scheduler, including
+management MIDI auditions; failed or safety-limited writes are absent. An edge
+view displays notes admitted to its bounded outgoing queue, while `/peers`
+remains authoritative for actual sends and later stale drops. Every event
+carries a server-authored acceptance time.
 
 The primary Apache ECharts Canvas piano roll uses time horizontally and MIDI
 pitch vertically. Note width represents scheduled duration, brightness
@@ -159,6 +162,5 @@ exponential delay, ignores malformed frames, and can pause or clear local
 history without affecting the runtime.
 
 The viewer accepts an optional `origin` query parameter and provides a source
-selector over its bounded local history. Stage 13 peer transport, operational
-snapshots, and the peer workspace are complete. Host/edge runtime composition
-is the next delivery stage.
+selector over its bounded local history. Stage 14 composes the edge and host
+runtimes and feeds these views from their live operational boundaries.

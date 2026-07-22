@@ -2,14 +2,16 @@
 
 The stage-ten management API provides local status, transactional
 configuration, capture-interface and MIDI discovery, MIDI safety controls,
-live-flow, and persistent-rule endpoints on the standalone HTTP listener.
+live-flow, peer-runtime, and persistent-rule endpoints on every runtime role.
 
 ## Exposure model
 
-The API is mounted only when the listener's actual bound address is IPv4 or
-IPv6 loopback. A wildcard or non-loopback listener continues to serve metrics
-and probes, but `/api/v1` is not mounted. Remote management will require the
-later authentication and TLS milestone.
+The API is mounted on the configured listener so a host can bind a reachable
+peer endpoint. Its request boundary still rejects every non-loopback client.
+This lets a host bind `0.0.0.0:8080`, accept authenticated peers remotely, and
+serve management only to a browser using `127.0.0.1:8080` or `localhost:8080`.
+The embedded frontend is likewise returned only to loopback clients. Remote
+management remains out of scope pending authentication and TLS hardening.
 
 Every API request must also come from a loopback peer, use `localhost` or a
 loopback IP in `Host` with the actual bound port, and, when `Origin` is present,
@@ -326,7 +328,8 @@ mapping, or MIDI.
 ## Peer runtime status
 
 `GET /api/v1/peers` returns one bounded role-aware snapshot and accepts no query
-parameters. Standalone documents contain an empty `nodes` array. Edge documents
+parameters. Every document includes `enabled`; standalone documents contain an
+empty `nodes` array. Edge documents
 add `outbound` with a display-safe target, negotiated remote identity,
 connection/backoff state, protocol and mapping versions, queue depth/capacity,
 send/drop/reconnect totals, send rate, optional timestamps and safe last error,

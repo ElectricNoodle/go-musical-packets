@@ -2,9 +2,9 @@
 
 The stage-nine runtime composes live packet capture, bounded flow selection and
 mapping, local MIDI scheduling, Prometheus metrics, and operational HTTP probes.
-Only the `standalone` role is accepted by this composition. The bounded peer
-transport and management surfaces are implemented, while edge and host process
-composition remains the next milestone.
+The same `run` command now composes `standalone`, `edge`, and `host` roles. This
+document describes the original local capture-to-MIDI role; peer-specific setup
+and lifecycle behavior is documented in [peer.md](peer.md).
 
 ## Start and validate
 
@@ -58,10 +58,10 @@ PUT /api/v1/rules/{id}
 DELETE /api/v1/rules/{id}
 ```
 
-The `/api/v1` routes are mounted only on an actually loopback-bound listener;
-metrics and probes remain available on a configured non-loopback listener.
-The embedded single-page frontend is also mounted only on that loopback
-listener. Its client-side routes fall back to the application shell while
+The `/api/v1` routes are mounted on every listener but enforce a loopback remote
+address, loopback authority, actual bound port, and matching local origin. The
+embedded single-page frontend is likewise returned only to loopback clients.
+Its client-side routes fall back to the application shell while
 missing static assets remain ordinary 404 responses.
 Configuration writes use strong revision preconditions and atomic persistence.
 See [management-api.md](management-api.md) for the request, security, redaction,

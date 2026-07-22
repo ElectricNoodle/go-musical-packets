@@ -23,6 +23,19 @@ type viewerRuntime interface {
 	Panic(context.Context) error
 }
 
+type viewerSink struct {
+	sink   pipeline.Sink
+	stream *uistream.Hub
+}
+
+func (output *viewerSink) Write(ctx context.Context, event music.NoteEvent) error {
+	if err := output.sink.Write(ctx, event); err != nil {
+		return err
+	}
+	output.stream.Publish(event)
+	return nil
+}
+
 func (output *viewerMIDI) Write(ctx context.Context, event music.NoteEvent) error {
 	if err := output.runtime.Write(ctx, event); err != nil {
 		return err

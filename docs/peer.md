@@ -1,10 +1,9 @@
 # Peer Transport
 
-Stage 13 provides a transport-independent, authenticated edge sender, host
-receiver, bounded operational snapshots, metrics, management representation,
-and role-aware browser workspace. Stage 14 composes these components into the
-`edge` and `host` command runtimes; standalone execution still rejects active
-peer transport until that composition is complete.
+Stages 13 and 14 provide the transport-independent protocol and compose it into
+the `edge` and `host` command runtimes. An edge maps captured traffic into a
+bounded reconnecting sender. A host accepts authenticated notes and gives them
+to the same coordinated MIDI scheduler used by optional local host capture.
 
 ## Wire contract
 
@@ -56,6 +55,35 @@ peer:
   stale_after: 500ms
 ```
 
+An edge uses `instance.role: edge`, disables local MIDI, enables capture and
+peer transport, and supplies the host URL. A host uses `instance.role: host`,
+enables MIDI and peer transport, omits `peer.url`, and listens on an address
+reachable by its edges. For example:
+
+```yaml
+# host
+instance: {id: studio-host, role: host}
+server: {listen_address: "0.0.0.0:8080"}
+peer: {enabled: true, token: shared-secret-at-least-16-bytes}
+
+# edge
+instance: {id: office-edge, role: edge}
+midi: {enabled: false}
+peer:
+  enabled: true
+  url: ws://studio-host:8080/api/v1/peer
+  token: shared-secret-at-least-16-bytes
+```
+
+Run each configuration with `musical-packets run --config <path>`. Use `wss://`
+directly or through a trusted TLS reverse proxy outside a trusted private
+network.
+
+Before capture starts, an edge resolves its configured host and excludes that
+address-and-port pair in both BPF and selector safety rules. A DNS address
+change therefore requires a process restart. The host's listener port is
+excluded by the existing local HTTP safety rules.
+
 `peer.token` and `peer.url` are write-only in management configuration
 responses. The operational peer snapshot contains a display-safe target with
 userinfo, query, and fragment removed. It never contains tokens or authorization
@@ -63,7 +91,8 @@ headers.
 
 ## Management and UI
 
-`GET /api/v1/peers` is local-only and returns a complete bounded snapshot. An
+`GET /api/v1/peers` is local-only and returns a complete bounded snapshot with
+the role and whether transport is enabled. An
 edge document contains its safe target, negotiated host, connection/backoff
 state, queue depth/capacity, sends, drops, reconnects, send rate, timestamps,
 RTT, safe last error, and observed channels. A host document contains connected
@@ -87,3 +116,12 @@ musical_packets_peer_round_trip_seconds
 ```
 
 Instance IDs, addresses, URLs, flow IDs, and event IDs are never metric labels.
+
+## Readiness and shutdown
+
+An edge is ready only while its host handshake is connected. A host does not
+require an edge to be connected, but still requires its configured MIDI output
+when MIDI is enabled. Shutdown first stops local capture, then stops the edge
+sender or closes and awaits every host WebSocket, and only then resets and
+closes MIDI. This prevents remote Note On writes from crossing scheduler
+teardown.
