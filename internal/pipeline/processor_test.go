@@ -51,6 +51,27 @@ func TestProcessorMapsSelectedPacketsInOrder(t *testing.T) {
 	}
 }
 
+func TestProcessorPassesFixedRuleIdentityToMapper(t *testing.T) {
+	source := &sliceSource{events: []packet.Event{testEvent(time.Unix(1_500, 0), 256)}}
+	sink := &collectingSink{}
+	processor := testProcessor(t, source, sink, noopObserver{}, 2, 2)
+	selector, err := flow.NewSelector(flow.SelectorConfig{
+		Seed: "test-seed", Default: flow.Action{State: flow.StatePlay, Channel: 7, Mode: "phrygian", Root: 4},
+	})
+	if err != nil {
+		t.Fatalf("NewSelector() error = %v", err)
+	}
+	processor.selector = selector
+
+	if err := processor.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	notes := sink.snapshot()
+	if len(notes) != 1 || notes[0].Mode != music.Phrygian || notes[0].Root != 4 {
+		t.Fatalf("notes = %#v, want one E phrygian note", notes)
+	}
+}
+
 func TestProcessorDropsWhenNoteQueueIsFull(t *testing.T) {
 	observer := &recordingObserver{}
 	processor := testProcessor(t, &sliceSource{}, &collectingSink{}, observer, 1, 1)

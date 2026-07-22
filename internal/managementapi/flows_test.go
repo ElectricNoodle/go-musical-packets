@@ -42,6 +42,7 @@ func TestFlowsGetAndHead(t *testing.T) {
 			MatchedPredicates: []string{},
 			Mode:              "dorian",
 			Root:              2,
+			FixedIdentity:     true,
 		}},
 		Overlay:   FlowOverlay{Muted: []string{testFlowA}, Soloed: []string{testFlowB}},
 		Total:     2,

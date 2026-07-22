@@ -60,3 +60,7 @@ rules:
     action:
       state: play
       channel: 1
+      # Omit both fields for a deterministic identity per matched flow.
+      # Set both to keep every match in one key and mode (root: C=0 through B=11).
+      # mode: dorian
+      # root: 2

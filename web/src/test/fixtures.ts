@@ -50,7 +50,7 @@ export const flowPage: FlowPage = {
       muted: false, soloed: false, state: 'play', channel: 4,
       rule_id: 'web-traffic', rule_tier: 'user', rule_name: 'Web traffic',
       decision_reason: 'user rule web-traffic matched every configured predicate',
-      matched_predicates: ['protocol tcp', 'destination ports 443'], mode: 'dorian', root: 2,
+      matched_predicates: ['protocol tcp', 'destination ports 443'], mode: 'dorian', root: 2, fixed_identity: true,
     },
     {
       id: 'fedcba9876543210fedcba98', protocol: 'udp',
@@ -62,7 +62,7 @@ export const flowPage: FlowPage = {
       packets: 12, bytes: 980, packets_a_to_b: 12, packets_b_to_a: 0,
       muted: true, soloed: false, state: 'ignore', channel: 1,
       rule_tier: 'temporary_mute', decision_reason: 'the flow is in the temporary mute set',
-      matched_predicates: [], mode: 'lydian', root: 7,
+      matched_predicates: [], mode: 'lydian', root: 7, fixed_identity: false,
     },
   ],
   overlay: { muted: ['fedcba9876543210fedcba98'], soloed: [] },

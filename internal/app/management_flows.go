@@ -161,6 +161,13 @@ func managementFlowSnapshot(
 	if err != nil {
 		return managementapi.FlowSnapshot{}, fmt.Errorf("derive musical identity: %w", err)
 	}
+	if selection.Mode != "" {
+		identity.Mode, err = music.ParseMode(selection.Mode)
+		if err != nil {
+			return managementapi.FlowSnapshot{}, fmt.Errorf("derive fixed musical identity: %w", err)
+		}
+		identity.Root = selection.Root
+	}
 	ruleName, reason, predicates := managementFlowExplanation(selection, rules)
 	return managementapi.FlowSnapshot{
 		ID:       snapshot.ID,
@@ -198,6 +205,7 @@ func managementFlowSnapshot(
 		MatchedPredicates: predicates,
 		Mode:              identity.Mode.String(),
 		Root:              identity.Root,
+		FixedIdentity:     selection.Mode != "",
 	}, nil
 }
 

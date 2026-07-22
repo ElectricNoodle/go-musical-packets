@@ -56,6 +56,7 @@ func (config Config) Clone() Config {
 		clone.Rules[index].Match.SourcePorts = cloneValue(rule.Match.SourcePorts)
 		clone.Rules[index].Match.DestinationPorts = cloneValue(rule.Match.DestinationPorts)
 		clone.Rules[index].Match.WireSize = cloneValue(rule.Match.WireSize)
+		clone.Rules[index].Action.Root = cloneValue(rule.Action.Root)
 		if rule.Match.RequiredTCPFlags != nil {
 			clone.Rules[index].Match.RequiredTCPFlags = make([]TCPFlag, len(rule.Match.RequiredTCPFlags))
 			copy(clone.Rules[index].Match.RequiredTCPFlags, rule.Match.RequiredTCPFlags)

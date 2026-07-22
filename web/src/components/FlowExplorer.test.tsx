@@ -13,7 +13,7 @@ describe('flow explorer', () => {
     expect(await screen.findByText('0123456789abcdef01234567')).toBeInTheDocument()
     expect(client.getFlows).toHaveBeenCalledWith(500, expect.any(AbortSignal))
     expect(screen.getByText(/D dorian/i)).toBeInTheDocument()
-    expect(screen.getByText('Channel 4')).toBeInTheDocument()
+    expect(screen.getByText('Channel 4 · fixed by rule')).toBeInTheDocument()
     expect(screen.getByText('Web traffic')).toBeInTheDocument()
     const webFlowRow = screen.getByText('0123456789abcdef01234567').closest('tr')
     expect(webFlowRow).not.toBeNull()

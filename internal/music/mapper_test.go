@@ -84,6 +84,29 @@ func TestMapperRejectsInvalidChannel(t *testing.T) {
 	}
 }
 
+func TestMapperUsesFixedMusicalIdentity(t *testing.T) {
+	mapper := testMapper(t)
+	event := packet.Event{
+		Source: packet.Endpoint{Addr: netip.MustParseAddr("192.0.2.1")}, Destination: packet.Endpoint{Addr: netip.MustParseAddr("192.0.2.2")},
+		Protocol: packet.ProtocolUDP, WireLength: 512, CapturedLength: 512,
+	}
+	got, err := mapper.Map(MapInput{Packet: event, Channel: 4, Mode: "locrian", Root: 6})
+	if err != nil {
+		t.Fatalf("Map() error = %v", err)
+	}
+	if got.Mode != Locrian || got.Root != 6 {
+		t.Fatalf("fixed identity = %s/%d, want locrian/6", got.Mode, got.Root)
+	}
+	assertNoteInMode(t, got)
+
+	if _, err := mapper.Map(MapInput{Packet: event, Channel: 4, Mode: "unknown", Root: 6}); err == nil {
+		t.Fatal("Map(invalid fixed mode) error = nil")
+	}
+	if _, err := mapper.Map(MapInput{Packet: event, Channel: 4, Mode: "dorian", Root: 12}); err == nil {
+		t.Fatal("Map(invalid fixed root) error = nil")
+	}
+}
+
 func testMapper(t *testing.T) *Mapper {
 	t.Helper()
 	mapper, err := NewMapper(MapperConfig{

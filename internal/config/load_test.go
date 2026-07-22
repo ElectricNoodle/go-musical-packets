@@ -37,6 +37,8 @@ rules:
     action:
       state: play
       channel: 4
+      mode: dorian
+      root: 2
 `))
 	if err != nil {
 		t.Fatalf("Decode() error = %v", err)
@@ -58,7 +60,7 @@ rules:
 	if err != nil {
 		t.Fatalf("FlowRules() error = %v", err)
 	}
-	if len(rules) != 1 || rules[0].ID != "web" || rules[0].Action != (flow.Action{State: flow.StatePlay, Channel: 4}) {
+	if len(rules) != 1 || rules[0].ID != "web" || rules[0].Action != (flow.Action{State: flow.StatePlay, Channel: 4, Mode: "dorian", Root: 2}) {
 		t.Fatalf("converted rules = %#v", rules)
 	}
 	wantFlags := packet.TCPFlagSYN | packet.TCPFlagACK

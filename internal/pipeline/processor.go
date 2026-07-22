@@ -195,6 +195,8 @@ func (p *Processor) processPacket(ctx context.Context, event packet.Event) {
 		Sequence:     observed.Flow.Packets,
 		InterArrival: interArrival,
 		Channel:      selection.Channel,
+		Mode:         selection.Mode,
+		Root:         selection.Root,
 	})
 	if err != nil {
 		p.observer.Mapped("unknown", "error", time.Since(mappingStarted), 0, 0)

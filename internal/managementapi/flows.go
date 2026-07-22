@@ -61,6 +61,7 @@ type FlowSnapshot struct {
 	MatchedPredicates []string     `json:"matched_predicates"`
 	Mode              string       `json:"mode"`
 	Root              uint8        `json:"root"`
+	FixedIdentity     bool         `json:"fixed_identity"`
 }
 
 // FlowOverlay is the complete temporary, non-persisted mute and solo state.

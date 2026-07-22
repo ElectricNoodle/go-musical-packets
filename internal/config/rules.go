@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ElectricNoodle/go-musical-packets/internal/flow"
+	"github.com/ElectricNoodle/go-musical-packets/internal/music"
 	"github.com/ElectricNoodle/go-musical-packets/internal/packet"
 )
 
@@ -58,6 +59,8 @@ type SizeRangeConfig struct {
 type RuleActionConfig struct {
 	State   FlowState `json:"state" yaml:"state"`
 	Channel uint8     `json:"channel" yaml:"channel"`
+	Mode    string    `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Root    *uint8    `json:"root,omitempty" yaml:"root,omitempty"`
 }
 
 // FlowRules validates and converts the configured persistent user rules.
@@ -109,6 +112,24 @@ func (rule RuleConfig) toFlowRule() (flow.Rule, error) {
 	}
 	if action.Channel > 16 {
 		problems = append(problems, errors.New("action.channel must be zero (inherit) or between 1 and 16"))
+	}
+	if (rule.Action.Mode == "") != (rule.Action.Root == nil) {
+		problems = append(problems, errors.New("action.mode and action.root must either both be set or both be omitted"))
+	} else if rule.Action.Mode != "" {
+		mode, err := music.ParseMode(rule.Action.Mode)
+		if err != nil {
+			problems = append(problems, fmt.Errorf("action.mode: %w", err))
+		} else {
+			action.Mode = mode.String()
+		}
+		if *rule.Action.Root > 11 {
+			problems = append(problems, errors.New("action.root must be between 0 and 11"))
+		} else {
+			action.Root = *rule.Action.Root
+		}
+		if action.State != flow.StatePlay {
+			problems = append(problems, errors.New("action.mode and action.root require action.state play"))
+		}
 	}
 
 	match := flow.Match{ExactFlowID: rule.Match.ExactFlowID, Protocol: rule.Match.Protocol}

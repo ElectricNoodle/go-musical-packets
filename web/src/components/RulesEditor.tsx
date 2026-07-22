@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { ApiError, type ManagementClient } from '../api/client'
 import type { FlowPage, RuleConfig, RuleMatch, RulesDocument } from '../api/types'
+import { MusicalIdentityFields, rootNames, withActionState } from './RuleMusicalFields'
 
 interface RulesEditorProps {
   client: ManagementClient
@@ -195,7 +196,7 @@ export function RulesEditor({ client, announce, onPolicyChanged }: RulesEditorPr
           }}>
             <div className="rule-order"><strong>{String(index + 1).padStart(2, '0')}</strong><button type="button" aria-label={`Move ${rule.id} up`} disabled={busy || index === 0 || !document.writable} onClick={() => move(index, -1)}>↑</button><button type="button" aria-label={`Move ${rule.id} down`} disabled={busy || index === document.rules.length - 1 || !document.writable} onClick={() => move(index, 1)}>↓</button></div>
             <div className="rule-card__body"><div className="rule-card__title"><span className={pinned ? 'rule-tier rule-tier--pinned' : 'rule-tier'}>{pinned ? 'Pinned' : 'User'}</span><div><strong>{rule.name || rule.id}</strong><code>{rule.id}</code></div></div><p>{matchSummary(rule)}</p>{shadow && <div className="shadow-warning">Potentially shadowed by <code>{shadow}</code></div>}</div>
-            <div className="rule-outcome"><span className={`decision decision--${rule.action.state}`}>{rule.action.state}</span><small>{rule.action.channel === 0 ? 'Default channel' : `Channel ${rule.action.channel}`}</small><small>{controlCounts.get(rule.id) ?? 0} currently controlled</small></div>
+            <div className="rule-outcome"><span className={`decision decision--${rule.action.state}`}>{rule.action.state}</span><small>{rule.action.channel === 0 ? 'Default channel' : `Channel ${rule.action.channel}`}</small><small>{rule.action.mode !== undefined && rule.action.root !== undefined ? `${rootNames[rule.action.root]} ${rule.action.mode}` : 'Automatic scale'}</small><small>{controlCounts.get(rule.id) ?? 0} currently controlled</small></div>
             <div className="rule-card__actions"><button type="button" disabled={busy || !document.writable} onClick={() => void mutate(`${rule.id} ${rule.enabled ? 'disabled' : 'enabled'}.`, (current) => client.replaceRule(rule.id, { ...copyRule(rule), enabled: !rule.enabled }, current.etag))}>{rule.enabled ? 'Disable' : 'Enable'}</button><button type="button" disabled={busy || !document.writable} onClick={() => setEditing({ rule: copyRule(rule), originalID: rule.id })}>Edit</button><button type="button" disabled={busy || !document.writable} onClick={() => { const duplicate = copyRule(rule); duplicate.id = duplicateID(rule.id, document.rules); duplicate.name = `${rule.name || rule.id} copy`; setEditing({ rule: duplicate }) }}>Duplicate</button><button className={confirmDelete === rule.id ? 'danger-action danger-action--armed' : 'danger-action'} type="button" disabled={busy || !document.writable} onClick={() => { if (confirmDelete !== rule.id) setConfirmDelete(rule.id); else void mutate(`Rule ${rule.id} deleted.`, (current) => client.deleteRule(rule.id, current.etag)) }}>{confirmDelete === rule.id ? 'Confirm delete' : 'Delete'}</button></div>
           </article>
         })}
@@ -243,5 +244,29 @@ function RuleEditDialog({ edit, busy, existingIDs, onSave, onClose }: { edit: Ed
     }
   }
 
-  return <div className="rule-dialog-backdrop" role="presentation"><section className="rule-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-rule-title"><header><div><span className="eyebrow">{edit.originalID ? 'Edit persistent rule' : 'New persistent rule'}</span><h2 id="edit-rule-title">Define match and outcome.</h2></div><button type="button" aria-label="Close rule editor" onClick={close} disabled={busy}>×</button></header>{error && <div className="rule-error" role="alert">{error}</div>}<form onSubmit={submit}><fieldset disabled={busy}><div className="rule-form-grid"><label className="field"><span>Rule ID</span><input value={rule.id} disabled={Boolean(edit.originalID)} onChange={(event) => setRule({ ...rule, id: event.target.value })} required /></label><label className="field"><span>Display name</span><input value={rule.name} onChange={(event) => setRule({ ...rule, name: event.target.value })} /></label><label className="field"><span>Action</span><select value={rule.action.state} onChange={(event) => setRule({ ...rule, action: { ...rule.action, state: event.target.value as RuleConfig['action']['state'] } })}><option value="play">Play</option><option value="monitor">Monitor</option><option value="ignore">Ignore</option></select></label><label className="field"><span>MIDI channel</span><select value={rule.action.channel} onChange={(event) => setRule({ ...rule, action: { ...rule.action, channel: Number(event.target.value) } })}><option value={0}>Inherit default</option>{Array.from({ length: 16 }, (_, index) => <option key={index + 1} value={index + 1}>Channel {index + 1}</option>)}</select></label></div><label className="toggle-card"><span><strong>Enabled</strong><small>Disabled rules remain ordered but do not evaluate.</small></span><input type="checkbox" checked={rule.enabled} onChange={(event) => setRule({ ...rule, enabled: event.target.checked })} /><i aria-hidden="true" /></label><label className="field"><span>Match JSON</span><textarea className="match-editor" value={matchText} onChange={(event) => setMatchText(event.target.value)} spellCheck={false} /><small>Supported fields: exact_flow_id, source_cidr, destination_cidr, protocol, port ranges, wire_size, and required_tcp_flags.</small></label></fieldset><footer><span>{dirty ? 'Unsaved changes' : 'No changes yet'}</span><div><button className="text-button" type="button" onClick={close}>{discardArmed ? 'Discard changes' : 'Cancel'}</button><button className="primary-button" type="submit" disabled={busy}>{edit.originalID ? 'Save rule' : 'Create rule'}</button></div></footer></form></section></div>
+  return (
+    <div className="rule-dialog-backdrop" role="presentation">
+      <section className="rule-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-rule-title">
+        <header>
+          <div><span className="eyebrow">{edit.originalID ? 'Edit persistent rule' : 'New persistent rule'}</span><h2 id="edit-rule-title">Define match and outcome.</h2></div>
+          <button type="button" aria-label="Close rule editor" onClick={close} disabled={busy}>×</button>
+        </header>
+        {error && <div className="rule-error" role="alert">{error}</div>}
+        <form onSubmit={submit}>
+          <fieldset disabled={busy}>
+            <div className="rule-form-grid">
+              <label className="field"><span>Rule ID</span><input value={rule.id} disabled={Boolean(edit.originalID)} onChange={(event) => setRule({ ...rule, id: event.target.value })} required /></label>
+              <label className="field"><span>Display name</span><input value={rule.name} onChange={(event) => setRule({ ...rule, name: event.target.value })} /></label>
+              <label className="field"><span>Action</span><select value={rule.action.state} onChange={(event) => setRule({ ...rule, action: withActionState(rule.action, event.target.value as RuleConfig['action']['state']) })}><option value="play">Play</option><option value="monitor">Monitor</option><option value="ignore">Ignore</option></select></label>
+              <label className="field"><span>MIDI channel</span><select value={rule.action.channel} onChange={(event) => setRule({ ...rule, action: { ...rule.action, channel: Number(event.target.value) } })}><option value={0}>Inherit default</option>{Array.from({ length: 16 }, (_, index) => <option key={index + 1} value={index + 1}>Channel {index + 1}</option>)}</select></label>
+              <MusicalIdentityFields action={rule.action} onChange={(action) => setRule({ ...rule, action })} />
+            </div>
+            <label className="toggle-card"><span><strong>Enabled</strong><small>Disabled rules remain ordered but do not evaluate.</small></span><input type="checkbox" checked={rule.enabled} onChange={(event) => setRule({ ...rule, enabled: event.target.checked })} /><i aria-hidden="true" /></label>
+            <label className="field"><span>Match JSON</span><textarea className="match-editor" value={matchText} onChange={(event) => setMatchText(event.target.value)} spellCheck={false} /><small>Supported fields: exact_flow_id, source_cidr, destination_cidr, protocol, port ranges, wire_size, and required_tcp_flags.</small></label>
+          </fieldset>
+          <footer><span>{dirty ? 'Unsaved changes' : 'No changes yet'}</span><div><button className="text-button" type="button" onClick={close}>{discardArmed ? 'Discard changes' : 'Cancel'}</button><button className="primary-button" type="submit" disabled={busy}>{edit.originalID ? 'Save rule' : 'Create rule'}</button></div></footer>
+        </form>
+      </section>
+    </div>
+  )
 }

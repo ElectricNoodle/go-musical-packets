@@ -79,20 +79,24 @@ solo set, and every row also provides toggles.
 
 Each row shows the backend-evaluated play, monitor, or ignore state; effective
 channel; precedence tier and controlling rule name; and deterministic root/mode
-identity. An expandable explanation includes the backend-authored decision
-reason and every configured predicate that matched. The backend evaluates the
-latest normalized event for every flow against one atomic policy generation,
-so the browser never reimplements rule precedence or match semantics.
+identity. It also labels that identity as automatic per flow or fixed by the
+controlling rule. An expandable explanation includes the backend-authored
+decision reason and every configured predicate that matched. The backend
+evaluates the latest normalized event for every flow against one atomic policy
+generation, so the browser never reimplements rule precedence or match
+semantics.
 
 One selected flow or any table row can open persistent rule creation. The
 available scopes are an exact-flow pin, the entire observed protocol, or the
 latest directional destination host/service. Users choose the durable rule ID,
-name, play/monitor/ignore action, and channel. The dialog reads the isolated
-rules resource, disables writes for a read-only runtime, submits the exact ETag
-in `If-Match`, and reloads without retrying when another session wins the
-revision race. A successful creation refreshes both live annotations and the
-application's configuration snapshot so later setup edits cannot overwrite a
-new rule from stale state.
+name, play/monitor/ignore action, channel, and whether a play rule derives its
+key and mode per flow or fixes one identity across every match. Fixed identity
+defaults to the selected flow's current key and mode. The dialog reads the
+isolated rules resource, disables writes for a read-only runtime, submits the
+exact ETag in `If-Match`, and reloads without retrying when another session wins
+the revision race. A successful creation refreshes both live annotations and
+the application's configuration snapshot so later setup edits cannot overwrite
+a new rule from stale state.
 
 ## Ordered rule workspace
 
@@ -102,7 +106,9 @@ currently retained flows controlled by each rule, and conservative warnings
 for obvious earlier-rule shadowing. Users can reorder with buttons or
 Alt+Arrow keys, enable or disable, edit, duplicate, and delete with a two-step
 confirmation. The match editor accepts the complete management rule schema as
-JSON rather than maintaining a second partial rule model in the browser.
+JSON rather than maintaining a second partial rule model in the browser. The
+action editor exposes the same automatic or fixed musical-identity choice as
+flow-based rule creation.
 
 Every mutation sends the currently displayed strong ETag. A 412 reloads the
 winning collection and asks the user to review instead of blindly replaying the

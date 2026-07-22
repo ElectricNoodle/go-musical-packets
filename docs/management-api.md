@@ -195,8 +195,15 @@ must exactly match the decoded path ID. `DELETE` removes that item. `PUT
 explicit array wrapper:
 
 ```json
-{"rules":[{"id":"broad-web","name":"Web","enabled":true,"match":{"protocol":"tcp"},"action":{"state":"play","channel":4}}]}
+{"rules":[{"id":"broad-web","name":"Web","enabled":true,"match":{"protocol":"tcp"},"action":{"state":"play","channel":4,"mode":"dorian","root":2}}]}
 ```
+
+Play actions may omit both `mode` and `root` to derive a deterministic musical
+identity independently for each matching flow. To keep every match in one
+scale, provide both fields: `mode` is one of `ionian`, `dorian`, `phrygian`,
+`lydian`, `mixolydian`, `aeolian`, or `locrian`, and `root` is a pitch class
+from 0 (C) through 11 (B). Supplying only one field, using either field on a
+monitor or ignore action, or providing an out-of-range root is invalid.
 
 An explicit empty array clears the collection; a missing or null array is
 invalid. `PATCH /api/v1/rules` accepts a complete, duplicate-free permutation:
@@ -231,8 +238,10 @@ stable ID, canonical endpoints, protocol, first and last observation times,
 packet and byte counters, directional packet counters, and current mute/solo
 flags. Every flow also includes its effective `state`, user-facing `channel`,
 `rule_tier`, optional `rule_id` and `rule_name`, a backend-authored
-`decision_reason`, the complete `matched_predicates` list, deterministic `mode`,
-and numeric root pitch class. Empty predicate lists are encoded as `[]`.
+`decision_reason`, the complete `matched_predicates` list, effective `mode`,
+numeric root pitch class, and `fixed_identity` flag. Empty predicate lists are
+encoded as `[]`. A false flag means the identity was derived deterministically
+from that flow; a true flag means its controlling rule fixed the identity.
 `latest_source` and `latest_destination` expose the direction of the newest
 retained metadata event so a client can construct directional rules without
 interpreting canonical endpoint order as packet direction. The default limit

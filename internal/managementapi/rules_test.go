@@ -484,6 +484,30 @@ func TestCreateRuleAcceptsMinimalCompatibleRepresentation(t *testing.T) {
 	}
 }
 
+func TestCreateRuleAcceptsFixedMusicalIdentity(t *testing.T) {
+	root := uint8(2)
+	rule := config.RuleConfig{
+		ID: "fixed",
+		Action: config.RuleActionConfig{
+			State:   config.FlowPlay,
+			Channel: 4,
+			Mode:    "dorian",
+			Root:    &root,
+		},
+	}
+	var got config.RuleConfig
+	handler := mustHandler(t, &stubBackend{createRuleFunc: func(_ context.Context, _ Revision, received config.RuleConfig) (RulesDocument, error) {
+		got = received
+		return RulesDocument{Revision: testRevisionB, Writable: true, Rules: config.RulesConfig{received}}, nil
+	}})
+	response := serve(handler, ruleJSONRequest(t, http.MethodPost, rulesCollectionPath, rule, testRevisionA))
+	assertStatus(t, response, http.StatusCreated)
+	if !reflect.DeepEqual(got, rule) {
+		t.Fatalf("CreateRule rule = %#v, want %#v", got, rule)
+	}
+	assertRulesDocument(t, response, RulesDocument{Revision: testRevisionB, Writable: true, Rules: config.RulesConfig{rule}})
+}
+
 func TestReorderJSONIsStrict(t *testing.T) {
 	tests := []string{
 		`{"ORDER":[]}`,

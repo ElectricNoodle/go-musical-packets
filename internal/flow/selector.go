@@ -42,10 +42,13 @@ type Match struct {
 }
 
 // Action is the routing result of a rule. Channel zero inherits the selector's
-// default channel.
+// default channel. An empty mode retains the flow's automatic musical identity;
+// a non-empty mode fixes both mode and root for every matching flow.
 type Action struct {
 	State   State
 	Channel uint8
+	Mode    string
+	Root    uint8
 }
 
 // Rule is an ordered traffic predicate and action.
@@ -68,6 +71,8 @@ type Selection struct {
 	FlowID  string
 	State   State
 	Channel uint8
+	Mode    string
+	Root    uint8
 	RuleID  string
 	Tier    string
 }
@@ -202,7 +207,10 @@ func (s *Selector) selection(flowID string, action Action, ruleID, tier string) 
 	if channel == 0 {
 		channel = s.defaultAction.Channel
 	}
-	return Selection{FlowID: flowID, State: action.State, Channel: channel, RuleID: ruleID, Tier: tier}
+	return Selection{
+		FlowID: flowID, State: action.State, Channel: channel,
+		Mode: action.Mode, Root: action.Root, RuleID: ruleID, Tier: tier,
+	}
 }
 
 func firstMatch(rules []Rule, event packet.Event, flowID string) (Rule, bool) {
@@ -282,5 +290,29 @@ func validateAction(action Action) error {
 	if action.Channel > 16 {
 		return errors.New("action channel must be zero (inherit) or between 1 and 16")
 	}
+	if action.Mode == "" {
+		if action.Root != 0 {
+			return errors.New("action root requires a fixed musical mode")
+		}
+		return nil
+	}
+	if action.State != StatePlay {
+		return errors.New("fixed musical identity requires the play action")
+	}
+	if !validMusicalMode(action.Mode) {
+		return fmt.Errorf("action musical mode %q is invalid", action.Mode)
+	}
+	if action.Root > 11 {
+		return errors.New("action musical root must be between 0 and 11")
+	}
 	return nil
+}
+
+func validMusicalMode(mode string) bool {
+	switch mode {
+	case "ionian", "dorian", "phrygian", "lydian", "mixolydian", "aeolian", "locrian":
+		return true
+	default:
+		return false
+	}
 }

@@ -50,6 +50,23 @@ describe('rule creator', () => {
     }), '"rules-revision-a"'))
   })
 
+  it('fixes every flow matched by a broad rule to one key and mode', async () => {
+    const client = stubClient()
+    const user = userEvent.setup()
+    render(<RuleCreator client={client} flow={firstFlow()} announce={vi.fn()} onCreated={vi.fn()} onClose={vi.fn()} />)
+
+    await user.selectOptions(await screen.findByLabelText(/match scope/i), 'protocol')
+    await user.selectOptions(screen.getByLabelText(/musical identity/i), 'fixed')
+    expect(screen.getByLabelText(/root key/i)).toHaveValue('2')
+    expect(screen.getByLabelText(/^mode$/i)).toHaveValue('dorian')
+    await user.click(screen.getByRole('button', { name: /create rule/i }))
+
+    await waitFor(() => expect(client.createRule).toHaveBeenCalledWith(expect.objectContaining({
+      match: { protocol: 'tcp' },
+      action: { state: 'play', channel: 4, mode: 'dorian', root: 2 },
+    }), '"rules-revision-a"'))
+  })
+
   it('reloads a conflicting rules revision without retrying the write', async () => {
     const client = stubClient({
       getRules: vi.fn().mockResolvedValue(rulesDocument),

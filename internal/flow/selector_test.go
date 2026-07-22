@@ -29,6 +29,23 @@ func TestSelectorRuleOrderAndChannel(t *testing.T) {
 	}
 }
 
+func TestSelectorPropagatesFixedMusicalIdentity(t *testing.T) {
+	selector := mustSelector(t, SelectorConfig{
+		Seed: "seed", Default: Action{State: StateMonitor, Channel: 1},
+		UserRules: []Rule{{
+			ID: "harmonic-filter", Enabled: true, Match: Match{Protocol: packet.ProtocolTCP},
+			Action: Action{State: StatePlay, Channel: 5, Mode: "dorian", Root: 2},
+		}},
+	})
+	got, err := selector.Evaluate(selectorEvent(), Overlay{})
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if got.Mode != "dorian" || got.Root != 2 || got.Channel != 5 {
+		t.Fatalf("selection = %#v, want fixed D dorian on channel 5", got)
+	}
+}
+
 func TestSelectorPrecedence(t *testing.T) {
 	event := selectorEvent()
 	key, _ := Canonicalize(event)
@@ -223,6 +240,24 @@ func TestNewSelectorRejectsInvalidRules(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("NewSelector() error = nil")
+	}
+}
+
+func TestNewSelectorRejectsInvalidFixedMusicalIdentity(t *testing.T) {
+	tests := []Action{
+		{State: StatePlay, Mode: "unknown"},
+		{State: StatePlay, Mode: "dorian", Root: 12},
+		{State: StateMonitor, Mode: "dorian", Root: 2},
+		{State: StatePlay, Root: 2},
+	}
+	for _, action := range tests {
+		_, err := NewSelector(SelectorConfig{
+			Seed: "seed", Default: Action{State: StateMonitor, Channel: 1},
+			UserRules: []Rule{{ID: "invalid", Enabled: true, Action: action}},
+		})
+		if err == nil {
+			t.Fatalf("NewSelector(%#v) error = nil", action)
+		}
 	}
 }
 

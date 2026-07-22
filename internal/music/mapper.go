@@ -29,6 +29,8 @@ type MapInput struct {
 	Sequence     uint64
 	InterArrival time.Duration
 	Channel      uint8
+	Mode         string
+	Root         uint8
 }
 
 // Mapper implements deterministic flow-mode-v1 conversion.
@@ -67,6 +69,16 @@ func (m *Mapper) Map(input MapInput) (NoteEvent, error) {
 	}
 	mode := identity.Mode
 	root := identity.Root
+	if input.Mode != "" {
+		mode, err = ParseMode(input.Mode)
+		if err != nil {
+			return NoteEvent{}, fmt.Errorf("map packet fixed identity: %w", err)
+		}
+		if input.Root > 11 {
+			return NoteEvent{}, errors.New("map packet fixed identity: root must be between 0 and 11")
+		}
+		root = input.Root
+	}
 
 	candidates := scaleNotes(mode, root, m.config.MinimumNote, m.config.MaximumNote)
 	if len(candidates) == 0 {

@@ -1,4 +1,5 @@
 export type FlowState = 'ignore' | 'monitor' | 'play'
+export type MusicalMode = 'ionian' | 'dorian' | 'phrygian' | 'lydian' | 'mixolydian' | 'aeolian' | 'locrian'
 export type RuntimeRole = 'standalone' | 'edge' | 'host'
 export type PacketProtocol = 'tcp' | 'udp' | 'icmp' | 'icmp6' | 'other'
 
@@ -170,6 +171,7 @@ export interface FlowSnapshot {
   matched_predicates: string[]
   mode: string
   root: number
+  fixed_identity: boolean
 }
 
 export interface FlowOverlay {
@@ -214,6 +216,8 @@ export interface RuleConfig {
   action: {
     state: FlowState
     channel: number
+    mode?: MusicalMode
+    root?: number
   }
 }
 

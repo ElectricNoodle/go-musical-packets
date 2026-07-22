@@ -73,6 +73,26 @@ describe('ordered rules editor', () => {
     ))
   })
 
+  it('adds a fixed musical identity to an existing play rule', async () => {
+    const client = stubClient({ getRules: vi.fn().mockResolvedValue(orderedRules) })
+    const user = userEvent.setup()
+    render(<RulesEditor client={client} announce={vi.fn()} />)
+    await screen.findByText('web-traffic')
+
+    await user.click(within(cardFor('web-traffic')).getByRole('button', { name: 'Edit' }))
+    const dialog = await screen.findByRole('dialog', { name: /define match and outcome/i })
+    await user.selectOptions(within(dialog).getByLabelText(/musical identity/i), 'fixed')
+    await user.selectOptions(within(dialog).getByLabelText(/root key/i), '8')
+    await user.selectOptions(within(dialog).getByLabelText(/^mode$/i), 'mixolydian')
+    await user.click(within(dialog).getByRole('button', { name: 'Save rule' }))
+
+    await waitFor(() => expect(client.replaceRule).toHaveBeenCalledWith(
+      'web-traffic',
+      expect.objectContaining({ action: { state: 'play', channel: 4, mode: 'mixolydian', root: 8 } }),
+      '"rules-a"',
+    ))
+  })
+
   it('imports the complete ordered collection atomically', async () => {
     const client = stubClient({ getRules: vi.fn().mockResolvedValue(orderedRules) })
     const user = userEvent.setup()

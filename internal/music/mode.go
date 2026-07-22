@@ -1,7 +1,10 @@
 // Package music contains deterministic musical domain types and mapping rules.
 package music
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Mode is one of the seven diatonic modes.
 type Mode uint8
@@ -48,6 +51,16 @@ func (m Mode) String() string {
 // Valid reports whether m is a supported mode.
 func (m Mode) Valid() bool {
 	return m < modeCount
+}
+
+// ParseMode resolves a canonical lowercase mode name.
+func ParseMode(value string) (Mode, error) {
+	for mode, name := range modeNames {
+		if value == name {
+			return Mode(mode), nil
+		}
+	}
+	return 0, fmt.Errorf("invalid musical mode %q; want one of %s", value, strings.Join(modeNames[:], ", "))
 }
 
 // Interval returns the semitone interval at degree. Degrees wrap every seven

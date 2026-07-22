@@ -35,3 +35,18 @@ func TestModeIntervalWrapsOctave(t *testing.T) {
 		t.Fatalf("Dorian.Interval(8) = %d, want 14", got)
 	}
 }
+
+func TestParseModeUsesCanonicalNames(t *testing.T) {
+	for _, mode := range Modes() {
+		got, err := ParseMode(mode.String())
+		if err != nil {
+			t.Fatalf("ParseMode(%q) error = %v", mode, err)
+		}
+		if got != mode {
+			t.Fatalf("ParseMode(%q) = %v, want %v", mode, got, mode)
+		}
+	}
+	if _, err := ParseMode("Dorian"); err == nil {
+		t.Fatal("ParseMode(non-canonical name) error = nil")
+	}
+}

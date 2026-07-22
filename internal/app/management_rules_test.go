@@ -478,13 +478,16 @@ func TestManagementCreatedRuleAffectsSelectionImmediately(t *testing.T) {
 	event := testPacket(41000, 443, time.Unix(100, 0))
 	key, _ := flow.Canonicalize(event)
 	rule := managementTestRule("immediate", config.FlowPlay, 7)
+	root := uint8(4)
+	rule.Action.Mode = "phrygian"
+	rule.Action.Root = &root
 	rule.Match.ExactFlowID = key.ID(configuration.Mapping.Seed)
 
 	if _, err := backend.CreateRule(context.Background(), document.Revision, rule); err != nil {
 		t.Fatalf("CreateRule() error = %v", err)
 	}
 	selection := mustSelect(t, controller, event)
-	if selection.Tier != "pinned" || selection.RuleID != "immediate" || selection.State != flow.StatePlay || selection.Channel != 7 {
+	if selection.Tier != "pinned" || selection.RuleID != "immediate" || selection.State != flow.StatePlay || selection.Channel != 7 || selection.Mode != "phrygian" || selection.Root != 4 {
 		t.Fatalf("Evaluate() = %#v, want immediately active rule", selection)
 	}
 }

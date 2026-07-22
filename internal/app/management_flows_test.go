@@ -115,10 +115,11 @@ func TestManagementBackendFlowsPagesAndConvertsSnapshots(t *testing.T) {
 
 func TestManagementBackendFlowAnnotationsUseLatestEventAndCurrentPolicy(t *testing.T) {
 	configuration := managementTestConfig()
+	fixedRoot := uint8(5)
 	configuration.Rules = config.RulesConfig{{
 		ID: "https-destination", Name: "HTTPS destination", Enabled: true,
 		Match:  config.RuleMatchConfig{DestinationPorts: &config.PortRangeConfig{Minimum: 443, Maximum: 443}},
-		Action: config.RuleActionConfig{State: config.FlowPlay, Channel: 9},
+		Action: config.RuleActionConfig{State: config.FlowPlay, Channel: 9, Mode: "locrian", Root: &fixedRoot},
 	}}
 	controller := mustController(t, configuration, nil, nil)
 	registry := newManagementFlowRegistry(t, configuration)
@@ -137,6 +138,7 @@ func TestManagementBackendFlowAnnotationsUseLatestEventAndCurrentPolicy(t *testi
 	}
 	got := page.Flows[0]
 	if got.ID != observed.Flow.ID || got.State != string(flow.StatePlay) || got.Channel != 9 || got.RuleID != "https-destination" || got.RuleTier != "user" ||
+		got.Mode != "locrian" || got.Root != 5 || !got.FixedIdentity ||
 		got.RuleName != "HTTPS destination" || got.DecisionReason != "user rule https-destination matched every configured predicate" ||
 		!reflect.DeepEqual(got.MatchedPredicates, []string{"destination ports 443"}) {
 		t.Fatalf("forward annotations = %#v, want matching user rule", got)

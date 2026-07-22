@@ -10,6 +10,7 @@ import (
 )
 
 func TestRulesConfigToFlowRulesPreservesOrderAndAllFields(t *testing.T) {
+	root := uint8(2)
 	rules := RulesConfig{
 		{
 			ID:      "first",
@@ -25,7 +26,7 @@ func TestRulesConfigToFlowRulesPreservesOrderAndAllFields(t *testing.T) {
 				WireSize:         &SizeRangeConfig{Minimum: 64, Maximum: 1500},
 				RequiredTCPFlags: []TCPFlag{TCPFlagSYN, TCPFlagACK},
 			},
-			Action: RuleActionConfig{State: FlowPlay, Channel: 6},
+			Action: RuleActionConfig{State: FlowPlay, Channel: 6, Mode: "dorian", Root: &root},
 		},
 		{
 			ID:      "second",
@@ -63,7 +64,7 @@ func TestRulesConfigToFlowRulesPreservesOrderAndAllFields(t *testing.T) {
 	if first.Match.RequiredTCPFlags != packet.TCPFlagSYN|packet.TCPFlagACK {
 		t.Fatalf("TCP flags = %b", first.Match.RequiredTCPFlags)
 	}
-	if first.Action != (flow.Action{State: flow.StatePlay, Channel: 6}) {
+	if first.Action != (flow.Action{State: flow.StatePlay, Channel: 6, Mode: "dorian", Root: 2}) {
 		t.Fatalf("action = %#v", first.Action)
 	}
 	if got[1].Action.Channel != 0 {
@@ -83,6 +84,11 @@ func TestRulesConfigToFlowRulesRejectsInvalidRules(t *testing.T) {
 		{name: "missing ID", mutate: func(rule *RuleConfig) { rule.ID = " " }, want: "id is required"},
 		{name: "bad action state", mutate: func(rule *RuleConfig) { rule.Action.State = "dance" }, want: "action.state"},
 		{name: "bad action channel", mutate: func(rule *RuleConfig) { rule.Action.Channel = 17 }, want: "action.channel"},
+		{name: "mode without root", mutate: func(rule *RuleConfig) { rule.Action.Mode = "dorian" }, want: "both be set"},
+		{name: "root without mode", mutate: func(rule *RuleConfig) { root := uint8(2); rule.Action.Root = &root }, want: "both be set"},
+		{name: "bad action mode", mutate: func(rule *RuleConfig) { root := uint8(2); rule.Action.Mode = "major"; rule.Action.Root = &root }, want: "action.mode"},
+		{name: "bad action root", mutate: func(rule *RuleConfig) { root := uint8(12); rule.Action.Mode = "dorian"; rule.Action.Root = &root }, want: "action.root"},
+		{name: "fixed monitor action", mutate: func(rule *RuleConfig) { root := uint8(2); rule.Action.Mode = "dorian"; rule.Action.Root = &root }, want: "action.state play"},
 		{name: "short exact flow ID", mutate: func(rule *RuleConfig) { rule.Match.ExactFlowID = "0123" }, want: "match.exact_flow_id"},
 		{name: "uppercase exact flow ID", mutate: func(rule *RuleConfig) { rule.Match.ExactFlowID = "0123456789ABCDEF01234567" }, want: "match.exact_flow_id"},
 		{name: "bad protocol", mutate: func(rule *RuleConfig) { rule.Match.Protocol = "sctp" }, want: "match.protocol"},
@@ -123,5 +129,19 @@ func TestValidateIncludesRuleProblems(t *testing.T) {
 	config.Rules = RulesConfig{{ID: "bad", Action: RuleActionConfig{State: FlowPlay, Channel: 17}}}
 	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "rules[0]") {
 		t.Fatalf("Validate() error = %v, want indexed rule error", err)
+	}
+}
+
+func TestConfigCloneDetachesFixedMusicalRoot(t *testing.T) {
+	root := uint8(2)
+	configuration := Default()
+	configuration.Rules = RulesConfig{{
+		ID: "fixed", Enabled: true,
+		Action: RuleActionConfig{State: FlowPlay, Mode: "dorian", Root: &root},
+	}}
+	clone := configuration.Clone()
+	*clone.Rules[0].Action.Root = 9
+	if got := *configuration.Rules[0].Action.Root; got != 2 {
+		t.Fatalf("source root = %d, want detached value 2", got)
 	}
 }

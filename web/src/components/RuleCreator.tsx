@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ApiError, type ManagementClient } from '../api/client'
 import type { FlowSnapshot, RuleConfig, RuleMatch, RulesDocument } from '../api/types'
+import { MusicalIdentityFields, withActionState } from './RuleMusicalFields'
 
 type RuleScope = 'exact' | 'protocol' | 'destination_service'
 
@@ -42,8 +43,7 @@ export function RuleCreator({ client, flow, onClose, onCreated, announce }: Rule
   const [scope, setScope] = useState<RuleScope>('exact')
   const [id, setID] = useState(`flow-${flow.id.slice(0, 12)}`)
   const [name, setName] = useState(`Pinned ${flow.protocol.toUpperCase()} flow`)
-  const [state, setState] = useState<RuleConfig['action']['state']>('play')
-  const [channel, setChannel] = useState(flow.channel)
+  const [action, setAction] = useState<RuleConfig['action']>({ state: 'play', channel: flow.channel })
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -88,7 +88,7 @@ export function RuleCreator({ client, flow, onClose, onCreated, announce }: Rule
       name: name.trim(),
       enabled: true,
       match,
-      action: { state, channel },
+      action,
     }
     setBusy(true)
     setError(null)
@@ -157,8 +157,9 @@ export function RuleCreator({ client, flow, onClose, onCreated, announce }: Rule
             <div className="rule-form-grid">
               <label className="field"><span>Rule ID</span><input value={id} onChange={(event) => setID(event.target.value)} required spellCheck={false} /></label>
               <label className="field"><span>Display name</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
-              <label className="field"><span>Action</span><select value={state} onChange={(event) => setState(event.target.value as RuleConfig['action']['state'])}><option value="play">Play</option><option value="monitor">Monitor</option><option value="ignore">Ignore</option></select></label>
-              <label className="field"><span>MIDI channel</span><select value={channel} onChange={(event) => setChannel(Number(event.target.value))}><option value={0}>Inherit default</option>{Array.from({ length: 16 }, (_, index) => <option key={index + 1} value={index + 1}>Channel {index + 1}</option>)}</select></label>
+              <label className="field"><span>Action</span><select value={action.state} onChange={(event) => setAction(withActionState(action, event.target.value as RuleConfig['action']['state']))}><option value="play">Play</option><option value="monitor">Monitor</option><option value="ignore">Ignore</option></select></label>
+              <label className="field"><span>MIDI channel</span><select value={action.channel} onChange={(event) => setAction({ ...action, channel: Number(event.target.value) })}><option value={0}>Inherit default</option>{Array.from({ length: 16 }, (_, index) => <option key={index + 1} value={index + 1}>Channel {index + 1}</option>)}</select></label>
+              <MusicalIdentityFields action={action} fallbackMode={flow.mode} fallbackRoot={flow.root} onChange={setAction} />
             </div>
 
             <div className="rule-preview"><span>Authoritative match</span><code>{JSON.stringify(match)}</code></div>
