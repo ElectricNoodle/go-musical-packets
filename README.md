@@ -8,7 +8,7 @@ The accepted architecture and delivery plan is in [docs/PLAN.md](docs/PLAN.md).
 
 ## Development status
 
-Delivery stages 1 through 12 are implemented. The local management API includes
+Delivery stages 1 through 13 are implemented. The local management API includes
 transactional configuration, capture-interface and MIDI discovery, MIDI
 audition and panic, bounded flow snapshots, temporary mute/solo controls, and
 ordered persistent-rule mutations. The embedded React/TypeScript foundation
@@ -23,7 +23,10 @@ and atomic import/export. Restart-required drafts can be durably saved without
 changing the active process, then revised or discarded before restart. The
 `/viewer` workspace now renders scheduler-accepted notes in a bounded live
 piano roll with keyboard, channel, mapping, rate, and accessible event views.
-The peer WebSocket protocol with channel preservation is next.
+The authenticated bounded peer protocol, edge sender, host receiver, peer
+metrics and management snapshots, role-aware `/peers` workspace, and
+viewer-by-origin navigation are implemented. Host/edge runtime composition is
+next.
 
 ## Commands
 
@@ -59,3 +62,5 @@ The local transactional HTTP contract is documented in
 [docs/management-api.md](docs/management-api.md).
 Frontend development, embedding, and setup behavior are documented in
 [docs/frontend.md](docs/frontend.md).
+Peer authentication, protocol, bounded reconnect behavior, status, and UI are
+documented in [docs/peer.md](docs/peer.md).

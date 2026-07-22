@@ -40,6 +40,17 @@ server:
   read_timeout: 10s
   write_timeout: 10s
 
+peer:
+  enabled: false
+  url: ""
+  token: ""
+  queue_capacity: 1024
+  maximum_connections: 64
+  recent_ttl: 5m
+  reconnect_base: 500ms
+  reconnect_limit: 30s
+  stale_after: 500ms
+
 metrics:
   namespace: musical_packets
 

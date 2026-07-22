@@ -5,6 +5,7 @@ import { SetupAssistant } from './components/SetupAssistant'
 import { StatusRail } from './components/StatusRail'
 import { FlowExplorer } from './components/FlowExplorer'
 import { RulesEditor } from './components/RulesEditor'
+import { PeersWorkspace } from './components/PeersWorkspace'
 
 const MusicalViewer = lazy(() => import('./components/MusicalViewer').then((module) => ({ default: module.MusicalViewer })))
 
@@ -17,10 +18,11 @@ interface AppProps {
   client?: ManagementClient
 }
 
-type View = 'setup' | 'viewer' | 'flows' | 'rules'
+type View = 'setup' | 'viewer' | 'flows' | 'rules' | 'peers'
 
 function viewFromPath(pathname: string): View {
   if (pathname === '/rules' || pathname.startsWith('/rules/')) return 'rules'
+  if (pathname === '/peers' || pathname.startsWith('/peers/')) return 'peers'
   if (pathname === '/viewer' || pathname.startsWith('/viewer/')) return 'viewer'
   return pathname === '/flows' || pathname.startsWith('/flows/') ? 'flows' : 'setup'
 }
@@ -65,7 +67,7 @@ export default function App({ client: suppliedClient }: AppProps) {
   const navigate = (event: MouseEvent<HTMLAnchorElement>, next: View) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault()
-    const path = next === 'flows' ? '/flows' : next === 'rules' ? '/rules' : next === 'viewer' ? '/viewer' : '/setup'
+    const path = next === 'flows' ? '/flows' : next === 'rules' ? '/rules' : next === 'viewer' ? '/viewer' : next === 'peers' ? '/peers' : '/setup'
     if (window.location.pathname !== path) window.history.pushState(null, '', path)
     setView(next)
   }
@@ -120,6 +122,7 @@ export default function App({ client: suppliedClient }: AppProps) {
           <a href="/viewer" aria-current={view === 'viewer' ? 'page' : undefined} onClick={(event) => navigate(event, 'viewer')}>Viewer</a>
           <a href="/flows" aria-current={view === 'flows' ? 'page' : undefined} onClick={(event) => navigate(event, 'flows')}>Flows</a>
           <a href="/rules" aria-current={view === 'rules' ? 'page' : undefined} onClick={(event) => navigate(event, 'rules')}>Rules</a>
+          <a href="/peers" aria-current={view === 'peers' ? 'page' : undefined} onClick={(event) => navigate(event, 'peers')}>Peers</a>
         </nav>
         <div className="topbar__meta">
           <span className="live-dot" aria-hidden="true" />
@@ -135,6 +138,7 @@ export default function App({ client: suppliedClient }: AppProps) {
         {view === 'viewer' && <Suspense fallback={<div className="viewer-loading" aria-busy="true">Preparing the live piano roll…</div>}><MusicalViewer /></Suspense>}
         {view === 'flows' && <FlowExplorer client={client} announce={announce} onPolicyChanged={() => load()} />}
         {view === 'rules' && <RulesEditor client={client} announce={announce} onPolicyChanged={() => load()} />}
+        {view === 'peers' && <PeersWorkspace client={client} />}
       </main>
 
       {notice && (

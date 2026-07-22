@@ -31,6 +31,7 @@ GET  /api/v1/interfaces
 GET  /api/v1/midi/devices
 POST /api/v1/midi/audition
 POST /api/v1/midi/panic
+GET  /api/v1/peers
 GET  /api/v1/flows
 POST /api/v1/flows/mute
 POST /api/v1/flows/solo
@@ -46,9 +47,10 @@ WS     /api/v1/events
 `GET /api/v1/config` returns canonical full YAML and a strong `ETag` containing
 an opaque, process-local revision token. The token is deliberately keyed rather
 than exposing the persisted file digest, so a caller cannot use a redacted
-response as an offline oracle for the mapping seed or peer URL. Tokens change
+response as an offline oracle for the mapping seed, peer URL, or peer bearer
+token. Tokens change
 when the process restarts; clients must GET the representation again. The
-management representation replaces both secrets with reserved write-only
+management representation replaces these secrets with reserved write-only
 placeholders. Sending an unchanged placeholder back preserves the active value.
 When a write-only value is active, validation and update requests must retain
 its placeholder; concrete values are rejected uniformly so the endpoints
@@ -321,6 +323,21 @@ accepted triggers only. Each client queue is fixed at
 increment `dropped`. Disconnecting or slowing a client cannot delay capture,
 mapping, or MIDI.
 
+## Peer runtime status
+
+`GET /api/v1/peers` returns one bounded role-aware snapshot and accepts no query
+parameters. Standalone documents contain an empty `nodes` array. Edge documents
+add `outbound` with a display-safe target, negotiated remote identity,
+connection/backoff state, protocol and mapping versions, queue depth/capacity,
+send/drop/reconnect totals, send rate, optional timestamps and safe last error,
+RTT milliseconds, and active channels. Host documents populate `nodes` with
+current and recently disconnected authenticated edges, their endpoints,
+versions, timestamps, rate, bounded result totals, and active channels.
+
+This local management representation never returns peer tokens, authorization
+headers, URL user information, query strings, or fragments. Arrays are encoded
+as `[]`, not `null`.
+
 ## Metrics
 
 Management instrumentation uses normalized, bounded labels. Request counts use
@@ -336,4 +353,9 @@ musical_packets_management_api_request_duration_seconds{route,method}
 musical_packets_management_config_updates_total{result}
 musical_packets_ui_clients
 musical_packets_ui_events_total{result}
+musical_packets_peer_connections{direction,state}
+musical_packets_peer_events_total{direction,result}
+musical_packets_peer_queue_depth
+musical_packets_peer_queue_capacity
+musical_packets_peer_round_trip_seconds
 ```

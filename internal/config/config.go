@@ -122,11 +122,15 @@ type ServerConfig struct {
 }
 
 type PeerConfig struct {
-	Enabled        bool          `json:"enabled" yaml:"enabled"`
-	URL            string        `json:"url" yaml:"url"`
-	ReconnectBase  time.Duration `json:"reconnect_base" yaml:"reconnect_base"`
-	ReconnectLimit time.Duration `json:"reconnect_limit" yaml:"reconnect_limit"`
-	StaleAfter     time.Duration `json:"stale_after" yaml:"stale_after"`
+	Enabled            bool          `json:"enabled" yaml:"enabled"`
+	URL                string        `json:"url" yaml:"url"`
+	Token              string        `json:"token" yaml:"token"`
+	QueueCapacity      int           `json:"queue_capacity" yaml:"queue_capacity"`
+	MaximumConnections int           `json:"maximum_connections" yaml:"maximum_connections"`
+	RecentTTL          time.Duration `json:"recent_ttl" yaml:"recent_ttl"`
+	ReconnectBase      time.Duration `json:"reconnect_base" yaml:"reconnect_base"`
+	ReconnectLimit     time.Duration `json:"reconnect_limit" yaml:"reconnect_limit"`
+	StaleAfter         time.Duration `json:"stale_after" yaml:"stale_after"`
 }
 
 type MetricsConfig struct {
@@ -197,9 +201,12 @@ func Default() Config {
 			WriteTimeout:  10 * time.Second,
 		},
 		Peer: PeerConfig{
-			ReconnectBase:  500 * time.Millisecond,
-			ReconnectLimit: 30 * time.Second,
-			StaleAfter:     500 * time.Millisecond,
+			QueueCapacity:      1024,
+			MaximumConnections: 64,
+			RecentTTL:          5 * time.Minute,
+			ReconnectBase:      500 * time.Millisecond,
+			ReconnectLimit:     30 * time.Second,
+			StaleAfter:         500 * time.Millisecond,
 		},
 		Metrics: MetricsConfig{Namespace: "musical_packets"},
 		Logging: LoggingConfig{Level: LogLevelInfo, Format: LogFormatText},
@@ -290,9 +297,23 @@ func (c Config) Validate() error {
 		problems = append(problems, errors.New("peer must be enabled for edge role"))
 	}
 	if c.Peer.Enabled {
-		parsed, err := url.Parse(c.Peer.URL)
-		if err != nil || parsed.Host == "" || (parsed.Scheme != "ws" && parsed.Scheme != "wss") {
-			problems = append(problems, errors.New("peer.url must be an absolute ws:// or wss:// URL"))
+		if c.Instance.Role == RoleEdge || c.Peer.URL != "" {
+			parsed, err := url.Parse(c.Peer.URL)
+			if err != nil || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "ws" && parsed.Scheme != "wss") {
+				problems = append(problems, errors.New("peer.url must be an absolute ws:// or wss:// URL without user information"))
+			}
+		}
+		if len(c.Peer.Token) < 16 && c.Peer.Token != RedactedValue {
+			problems = append(problems, errors.New("peer.token must contain at least 16 bytes when peer transport is enabled"))
+		}
+		if c.Peer.QueueCapacity <= 0 {
+			problems = append(problems, errors.New("peer.queue_capacity must be positive"))
+		}
+		if c.Peer.MaximumConnections <= 0 || c.Peer.MaximumConnections > 1024 {
+			problems = append(problems, errors.New("peer.maximum_connections must be between 1 and 1024"))
+		}
+		if c.Peer.RecentTTL <= 0 {
+			problems = append(problems, errors.New("peer.recent_ttl must be positive"))
 		}
 		if c.Peer.ReconnectBase <= 0 || c.Peer.ReconnectLimit < c.Peer.ReconnectBase {
 			problems = append(problems, errors.New("peer reconnect durations must be positive and ordered"))

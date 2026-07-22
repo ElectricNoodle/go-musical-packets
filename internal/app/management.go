@@ -17,6 +17,7 @@ import (
 	"github.com/ElectricNoodle/go-musical-packets/internal/managementapi"
 	"github.com/ElectricNoodle/go-musical-packets/internal/midi"
 	"github.com/ElectricNoodle/go-musical-packets/internal/music"
+	"github.com/ElectricNoodle/go-musical-packets/internal/peer"
 )
 
 const (
@@ -32,12 +33,23 @@ type managementBackend struct {
 	ready      *atomic.Bool
 	lifecycle  context.Context
 	revisions  *managementRevisionCodec
+	peers      peerSnapshotter
 }
 
 type managementMIDI interface {
 	Snapshot() midi.ManagerSnapshot
 	Write(context.Context, music.NoteEvent) error
 	Panic(context.Context) error
+}
+
+type peerSnapshotter interface {
+	Snapshot() peer.Snapshot
+}
+
+type staticPeerSnapshot struct{ role string }
+
+func (snapshot staticPeerSnapshot) Snapshot() peer.Snapshot {
+	return peer.Snapshot{Role: snapshot.role, Nodes: []peer.NodeSnapshot{}}
 }
 
 // managementRevisionCodec keeps exact-byte repository digests behind an
@@ -84,6 +96,7 @@ func newManagementBackend(
 		ready:      ready,
 		lifecycle:  lifecycle,
 		revisions:  revisions,
+		peers:      staticPeerSnapshot{role: string(controller.Current().Config.Instance.Role)},
 	}, nil
 }
 

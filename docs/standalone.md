@@ -2,8 +2,9 @@
 
 The stage-nine runtime composes live packet capture, bounded flow selection and
 mapping, local MIDI scheduling, Prometheus metrics, and operational HTTP probes.
-Only the `standalone` role is accepted at this stage; peer transport, edge, and
-host composition remain later milestones.
+Only the `standalone` role is accepted by this composition. The bounded peer
+transport and management surfaces are implemented, while edge and host process
+composition remains the next milestone.
 
 ## Start and validate
 

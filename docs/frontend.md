@@ -117,6 +117,22 @@ the portable ordered rule array. Edit dialogs warn before discarding unsaved
 work and protect dirty forms from accidental navigation. Read-only runtimes
 remain inspectable and exportable while all write controls are disabled.
 
+## Peer workspace
+
+The `/peers` workspace polls the bounded `GET /api/v1/peers` snapshot every two
+seconds while the page is visible. An edge sees its safe configured target,
+negotiated host identity, connection or backoff state, bounded queue pressure,
+send rate and totals, stale/full drops, retries, RTT, last send, safe error, and
+channels used. A host sees a responsive searchable grid of connected and recent
+edge nodes with identity, endpoint, authentication and protocol state,
+connection/activity times, accepted-note rate, result totals, and channels.
+
+Node identities and endpoints are display data only and never metric labels.
+Tokens and raw authorization data are absent from the API. Each host node links
+to `/viewer?origin=<instance>` so accepted notes can be inspected by source.
+Standalone mode presents an explicit inactive state rather than fabricating a
+connection.
+
 ## Musical viewer
 
 The `/viewer` workspace consumes `WS /api/v1/events`. It displays only notes
@@ -142,5 +158,7 @@ notes, 60 rate samples, and 24 rendered log rows, reconnects with bounded
 exponential delay, ignores malformed frames, and can pause or clear local
 history without affecting the runtime.
 
-Stage 12 is complete. The peer WebSocket protocol with channel preservation is
-the next delivery stage.
+The viewer accepts an optional `origin` query parameter and provides a source
+selector over its bounded local history. Stage 13 peer transport, operational
+snapshots, and the peer workspace are complete. Host/edge runtime composition
+is the next delivery stage.

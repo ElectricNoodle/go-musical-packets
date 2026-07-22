@@ -82,7 +82,7 @@ func TestManagementRuleHTTPUsesSharedRevisionAndPublishesImmediately(t *testing.
 		t.Fatalf("Read() error = %v", err)
 	}
 	assertManagementRuleIDs(t, durable.Config.Rules, rule.ID)
-	if durable.Config.Mapping.Seed != configuration.Mapping.Seed || durable.Config.Peer.URL != configuration.Peer.URL {
+	if durable.Config.Mapping.Seed != configuration.Mapping.Seed || durable.Config.Peer.URL != configuration.Peer.URL || durable.Config.Peer.Token != configuration.Peer.Token {
 		t.Fatal("POST rule changed durable secrets")
 	}
 

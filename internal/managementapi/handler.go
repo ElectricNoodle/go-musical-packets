@@ -74,6 +74,7 @@ type Backend interface {
 	Flows(context.Context, FlowPageRequest) (FlowPage, error)
 	SetMutedFlows(context.Context, []string) (FlowOverlay, error)
 	SetSoloedFlows(context.Context, []string) (FlowOverlay, error)
+	Peers(context.Context) (PeersDocument, error)
 }
 
 // ErrorKind classifies errors returned across the Backend boundary.
@@ -238,6 +239,8 @@ func (handler *handler) ServeHTTP(response http.ResponseWriter, request *http.Re
 		handler.serveMIDIAudition(response, request)
 	case midiPanicPath:
 		handler.serveMIDIPanic(response, request)
+	case peersPath:
+		handler.servePeers(response, request)
 	case rulesCollectionPath:
 		handler.serveRulesCollection(response, request)
 	case "/api/v1/flows":

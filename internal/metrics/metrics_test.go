@@ -130,12 +130,34 @@ func TestUIObserverExportsBoundedViewerMetrics(t *testing.T) {
 	assertMetricValue(t, observer.events.WithLabelValues("dropped"), 3)
 }
 
+func TestPeerObserverExportsBoundedTransportMetrics(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	observer, err := NewPeerObserver("musical_packets", registry)
+	if err != nil {
+		t.Fatalf("NewPeerObserver() error = %v", err)
+	}
+	observer.Connection("inbound", "connected")
+	observer.Connection("inbound", "connected")
+	observer.Connection("inbound", "disconnected")
+	observer.Connection("outbound", "connected")
+	observer.Event("outbound", "sent")
+	observer.Queue(3, 32)
+	observer.RoundTrip(25 * time.Millisecond)
+
+	assertMetricValue(t, observer.connections.WithLabelValues("inbound", "connected"), 1)
+	assertMetricValue(t, observer.connections.WithLabelValues("outbound", "connected"), 1)
+	assertMetricValue(t, observer.events.WithLabelValues("outbound", "sent"), 1)
+	assertMetricValue(t, observer.queueDepth, 3)
+	assertMetricValue(t, observer.queueLimit, 32)
+	assertMetricValue(t, observer.rtt, .025)
+}
+
 func TestBundleIncludesManagementObserver(t *testing.T) {
 	bundle, err := New("musical_packets")
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	if bundle.Registry == nil || bundle.Pipeline == nil || bundle.MIDI == nil || bundle.Management == nil || bundle.UI == nil {
+	if bundle.Registry == nil || bundle.Pipeline == nil || bundle.MIDI == nil || bundle.Management == nil || bundle.UI == nil || bundle.Peer == nil {
 		t.Fatalf("New() returned incomplete bundle: %#v", bundle)
 	}
 }

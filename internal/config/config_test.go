@@ -49,8 +49,46 @@ func TestEdgeRequiresValidPeer(t *testing.T) {
 
 	config.Peer.Enabled = true
 	config.Peer.URL = "wss://host.example/v1/notes"
+	config.Peer.Token = "sixteen-byte-token"
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestHostPeerAcceptsInboundConfigurationWithoutURL(t *testing.T) {
+	config := Default()
+	config.Instance.Role = RoleHost
+	config.Peer.Enabled = true
+	config.Peer.Token = "sixteen-byte-token"
+	if err := config.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsUnsafePeerSettings(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{name: "short token", mutate: func(config *Config) { config.Peer.Token = "short" }, want: "peer.token"},
+		{name: "credentials in URL", mutate: func(config *Config) { config.Peer.URL = "wss://user:secret@host.example/peer" }, want: "peer.url"},
+		{name: "queue", mutate: func(config *Config) { config.Peer.QueueCapacity = 0 }, want: "queue_capacity"},
+		{name: "connections", mutate: func(config *Config) { config.Peer.MaximumConnections = 0 }, want: "maximum_connections"},
+		{name: "history", mutate: func(config *Config) { config.Peer.RecentTTL = 0 }, want: "recent_ttl"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := Default()
+			config.Instance.Role = RoleEdge
+			config.Peer.Enabled = true
+			config.Peer.URL = "wss://host.example/api/v1/peer"
+			config.Peer.Token = "sixteen-byte-token"
+			test.mutate(&config)
+			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

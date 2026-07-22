@@ -185,6 +185,7 @@ export function MusicalViewer({ connect = defaultConnect }: MusicalViewerProps) 
 	const [dropped, setDropped] = useState(0)
 	const [paused, setPaused] = useState(false)
 	const [colorMode, setColorMode] = useState<ColorMode>('channel')
+	const [originFilter, setOriginFilter] = useState(() => new URLSearchParams(window.location.search).get('origin') ?? '')
 	const [selectedAt, setSelectedAt] = useState<string | null>(null)
 	const [now, setNow] = useState(Date.now())
 	const pausedRef = useRef(paused)
@@ -246,9 +247,11 @@ export function MusicalViewer({ connect = defaultConnect }: MusicalViewerProps) 
 		}
 	}, [connect])
 
-	const active = useMemo(() => notes.filter((note) => Date.parse(note.accepted_at) <= now && Date.parse(note.accepted_at) + note.duration_ms > now), [notes, now])
-	const latest = notes.at(-1)
-	const selected = notes.find((note) => note.accepted_at === selectedAt) ?? latest
+	const origins = useMemo(() => [...new Set(notes.map((note) => note.origin))].sort(), [notes])
+	const visibleNotes = useMemo(() => originFilter ? notes.filter((note) => note.origin === originFilter) : notes, [notes, originFilter])
+	const active = useMemo(() => visibleNotes.filter((note) => Date.parse(note.accepted_at) <= now && Date.parse(note.accepted_at) + note.duration_ms > now), [visibleNotes, now])
+	const latest = visibleNotes.at(-1)
+	const selected = visibleNotes.find((note) => note.accepted_at === selectedAt) ?? latest
 	const scale = selected ? (modeIntervals[selected.mode] ?? []).map((interval) => pitchNames[(selected.root + interval) % 12]) : []
 	const channelCounts = useMemo(() => active.reduce((counts, note) => {
 		counts[note.channel - 1] = (counts[note.channel - 1] ?? 0) + 1
@@ -267,6 +270,7 @@ export function MusicalViewer({ connect = defaultConnect }: MusicalViewerProps) 
 			<div className="viewer-controls">
 				<span className={`stream-state stream-state--${streamState}`}><i />{streamState}</span>
 				<label>Color by<select value={colorMode} onChange={(event) => setColorMode(event.target.value as ColorMode)}><option value="channel">Channel</option><option value="mode">Mode</option><option value="source">Source</option><option value="flow">Flow</option></select></label>
+				<label>Source<select value={originFilter} onChange={(event) => { setOriginFilter(event.target.value); setSelectedAt(null) }}><option value="">All sources</option>{originFilter && !origins.includes(originFilter) && <option value={originFilter}>{originFilter}</option>}{origins.map((origin) => <option key={origin} value={origin}>{origin}</option>)}</select></label>
 				<button className="secondary-button" type="button" aria-pressed={paused} onClick={() => setPaused((value) => !value)}>{paused ? 'Resume' : 'Pause view'}</button>
 				<button className="text-button" type="button" onClick={() => { setNotes([]); setSelectedAt(null) }}>Clear</button>
 			</div>
@@ -274,8 +278,8 @@ export function MusicalViewer({ connect = defaultConnect }: MusicalViewerProps) 
 
 		<div className="viewer-grid">
 			<div className="viewer-main">
-				<div className="panel-heading"><div><span>20 second window</span><strong>Piano roll</strong></div><small>{notes.length}/{HISTORY_CAPACITY} retained · {dropped} dropped</small></div>
-				<PianoRoll notes={notes} now={now} colorMode={colorMode} />
+				<div className="panel-heading"><div><span>20 second window</span><strong>Piano roll</strong></div><small>{visibleNotes.length}/{notes.length} visible · {dropped} dropped</small></div>
+				<PianoRoll notes={visibleNotes} now={now} colorMode={colorMode} />
 				<div className="keyboard" aria-label="Illuminated MIDI keyboard">
 					{keyboard.map((note) => {
 						const sounding = active.find((event) => event.note === note)
@@ -300,7 +304,7 @@ export function MusicalViewer({ connect = defaultConnect }: MusicalViewerProps) 
 		<RateStrip samples={rates} />
 		<section className="event-log" aria-label="Recent accepted note events">
 			<div className="panel-heading"><div><span>Accessible history</span><strong>Event log</strong></div><small>Newest first</small></div>
-			<div role="log" aria-live="polite">{notes.length === 0 ? <p>Accepted notes will appear here.</p> : notes.slice(-24).reverse().map((note) => <button type="button" aria-pressed={selected?.accepted_at === note.accepted_at} onClick={() => setSelectedAt(note.accepted_at)} key={`${note.id}:${note.accepted_at}`}><time>{new Date(note.accepted_at).toLocaleTimeString()}</time><strong>{pitchLabel(note.note)}</strong><span>Channel {note.channel}</span><span>{pitchNames[note.root]} {note.mode}</span><code>{note.flow_id}</code></button>)}</div>
+			<div role="log" aria-live="polite">{visibleNotes.length === 0 ? <p>{originFilter ? `Waiting for accepted notes from ${originFilter}.` : 'Accepted notes will appear here.'}</p> : visibleNotes.slice(-24).reverse().map((note) => <button type="button" aria-pressed={selected?.accepted_at === note.accepted_at} onClick={() => setSelectedAt(note.accepted_at)} key={`${note.id}:${note.accepted_at}`}><time>{new Date(note.accepted_at).toLocaleTimeString()}</time><strong>{pitchLabel(note.note)}</strong><span>Channel {note.channel}</span><span>{pitchNames[note.root]} {note.mode}</span><code>{note.flow_id}</code></button>)}</div>
 		</section>
 		</section>
 	)

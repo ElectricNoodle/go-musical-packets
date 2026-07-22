@@ -20,6 +20,9 @@ func (config Config) Redacted() Config {
 	if redacted.Peer.URL != "" {
 		redacted.Peer.URL = RedactedURLValue
 	}
+	if redacted.Peer.Token != "" {
+		redacted.Peer.Token = RedactedValue
+	}
 	return redacted
 }
 
@@ -35,6 +38,9 @@ func ResolveRedacted(candidate, current Config) (Config, error) {
 	if current.Peer.URL != "" && resolved.Peer.URL != RedactedURLValue {
 		return Config{}, errors.New("peer.url must use its write-only placeholder")
 	}
+	if current.Peer.Token != "" && resolved.Peer.Token != RedactedValue {
+		return Config{}, errors.New("peer.token must use its write-only placeholder")
+	}
 	if resolved.Mapping.Seed == RedactedValue {
 		if current.Mapping.Seed == "" {
 			return Config{}, errors.New("mapping.seed redaction placeholder has no active value")
@@ -46,6 +52,12 @@ func ResolveRedacted(candidate, current Config) (Config, error) {
 			return Config{}, errors.New("peer.url redaction placeholder has no active value")
 		}
 		resolved.Peer.URL = current.Peer.URL
+	}
+	if resolved.Peer.Token == RedactedValue {
+		if current.Peer.Token == "" {
+			return Config{}, errors.New("peer.token redaction placeholder has no active value")
+		}
+		resolved.Peer.Token = current.Peer.Token
 	}
 	return resolved, nil
 }

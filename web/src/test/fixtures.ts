@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { Configuration, FlowPage, RulesDocument, RuntimeSnapshot } from '../api/types'
+import type { Configuration, FlowPage, PeersDocument, RulesDocument, RuntimeSnapshot } from '../api/types'
 import type { ManagementClient } from '../api/client'
 
 export const configuration: Configuration = {
@@ -16,7 +16,10 @@ export const configuration: Configuration = {
   },
   midi: { enabled: true, exact_device_name: '', device_name_regexp: '', poll_interval: '2s' },
   server: { listen_address: '127.0.0.1:8080', read_timeout: '10s', write_timeout: '10s' },
-  peer: { enabled: false, url: '<write-only-url>', reconnect_base: '500ms', reconnect_limit: '30s', stale_after: '500ms' },
+  peer: {
+    enabled: false, url: '<write-only-url>', token: '', queue_capacity: 1024,
+    maximum_connections: 64, recent_ttl: '5m', reconnect_base: '500ms', reconnect_limit: '30s', stale_after: '500ms',
+  },
   metrics: { namespace: 'musical_packets' },
   logging: { level: 'info', format: 'text' },
   rules: [],
@@ -78,6 +81,8 @@ export const rulesDocument: RulesDocument = {
   rules: [],
 }
 
+export const peersDocument: PeersDocument = { role: 'standalone', nodes: [] }
+
 export function stubClient(overrides: Partial<ManagementClient> = {}): ManagementClient {
   return {
     getStatus: vi.fn().mockResolvedValue(snapshot.status),
@@ -85,6 +90,7 @@ export function stubClient(overrides: Partial<ManagementClient> = {}): Managemen
     getPendingConfig: vi.fn().mockRejectedValue(new Error('pending configuration was not found')),
     getInterfaces: vi.fn().mockResolvedValue(snapshot.interfaces),
     getMIDI: vi.fn().mockResolvedValue(snapshot.midi),
+    getPeers: vi.fn().mockResolvedValue(peersDocument),
     validateConfig: vi.fn().mockResolvedValue({ revision: 'public-revision', hot_fields: [], restart_required_fields: [] }),
     updateConfig: vi.fn().mockResolvedValue(snapshot.config),
     stageConfig: vi.fn().mockImplementation(async (config) => ({ config, revision: '"pending-revision"' })),

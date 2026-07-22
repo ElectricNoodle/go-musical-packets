@@ -4,6 +4,7 @@ package metrics
 import (
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -17,6 +18,7 @@ type Bundle struct {
 	MIDI       *MIDIObserver
 	Management *ManagementObserver
 	UI         *UIObserver
+	Peer       *PeerObserver
 }
 
 // New constructs an isolated registry with Go, process, and pipeline metrics.
@@ -44,7 +46,96 @@ func New(namespace string) (*Bundle, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Bundle{Registry: registry, Pipeline: observer, MIDI: midiObserver, Management: managementObserver, UI: uiObserver}, nil
+	peerObserver, err := NewPeerObserver(namespace, registry)
+	if err != nil {
+		return nil, err
+	}
+	return &Bundle{Registry: registry, Pipeline: observer, MIDI: midiObserver, Management: managementObserver, UI: uiObserver, Peer: peerObserver}, nil
+}
+
+// PeerObserver implements peer transport instrumentation using only bounded
+// direction, state, and result labels. Peer identities never become labels.
+type PeerObserver struct {
+	mu          sync.Mutex
+	inbound     int
+	connections *prometheus.GaugeVec
+	events      *prometheus.CounterVec
+	queueDepth  prometheus.Gauge
+	queueLimit  prometheus.Gauge
+	rtt         prometheus.Gauge
+}
+
+// NewPeerObserver registers bounded peer collectors.
+func NewPeerObserver(namespace string, registerer prometheus.Registerer) (*PeerObserver, error) {
+	if registerer == nil {
+		return nil, fmt.Errorf("Prometheus registerer is required")
+	}
+	observer := &PeerObserver{
+		connections: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace, Name: "peer_connections", Help: "Peer connection state by bounded direction and state.",
+		}, []string{"direction", "state"}),
+		events: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace, Name: "peer_events_total", Help: "Peer note events by bounded direction and result.",
+		}, []string{"direction", "result"}),
+		queueDepth: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Name: "peer_queue_depth", Help: "Current events waiting in the edge peer queue.",
+		}),
+		queueLimit: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Name: "peer_queue_capacity", Help: "Configured edge peer queue capacity.",
+		}),
+		rtt: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace, Name: "peer_round_trip_seconds", Help: "Most recently observed peer application round-trip time.",
+		}),
+	}
+	collectors := []prometheus.Collector{observer.connections, observer.events, observer.queueDepth, observer.queueLimit, observer.rtt}
+	registered := make([]prometheus.Collector, 0, len(collectors))
+	for _, collector := range collectors {
+		if err := registerer.Register(collector); err != nil {
+			for _, previous := range registered {
+				registerer.Unregister(previous)
+			}
+			return nil, fmt.Errorf("register peer metric: %w", err)
+		}
+		registered = append(registered, collector)
+	}
+	return observer, nil
+}
+
+func (observer *PeerObserver) Connection(direction, state string) {
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	if direction == "inbound" {
+		switch state {
+		case "connected":
+			observer.inbound++
+		case "disconnected":
+			if observer.inbound > 0 {
+				observer.inbound--
+			}
+		}
+		observer.connections.WithLabelValues("inbound", "connected").Set(float64(observer.inbound))
+		return
+	}
+	for _, candidate := range []string{"connecting", "connected", "backoff", "disconnected"} {
+		value := 0.0
+		if candidate == state {
+			value = 1
+		}
+		observer.connections.WithLabelValues(direction, candidate).Set(value)
+	}
+}
+
+func (observer *PeerObserver) Event(direction, result string) {
+	observer.events.WithLabelValues(direction, result).Inc()
+}
+
+func (observer *PeerObserver) Queue(depth, capacity int) {
+	observer.queueDepth.Set(float64(depth))
+	observer.queueLimit.Set(float64(capacity))
+}
+
+func (observer *PeerObserver) RoundTrip(duration time.Duration) {
+	observer.rtt.Set(duration.Seconds())
 }
 
 // UIObserver implements the browser-event stream observer contract.

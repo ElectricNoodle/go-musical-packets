@@ -7,6 +7,7 @@ import type {
   InterfacesDocument,
   MIDIDevicesDocument,
   ProblemDocument,
+  PeersDocument,
   RuleConfig,
   RulesDocument,
   Status,
@@ -33,6 +34,7 @@ export interface ManagementClient {
   getPendingConfig(signal?: AbortSignal): Promise<ConfigDocument>
   getInterfaces(signal?: AbortSignal): Promise<InterfacesDocument>
   getMIDI(signal?: AbortSignal): Promise<MIDIDevicesDocument>
+  getPeers(signal?: AbortSignal): Promise<PeersDocument>
   validateConfig(config: Configuration, signal?: AbortSignal): Promise<Validation>
   updateConfig(config: Configuration, revision: string, signal?: AbortSignal): Promise<ConfigDocument>
   stageConfig(config: Configuration, revision: string, signal?: AbortSignal): Promise<ConfigDocument>
@@ -113,6 +115,7 @@ export function createManagementClient(fetcher: typeof fetch = fetch): Managemen
     getPendingConfig: async (signal) => configDocument(await request('/api/v1/config/pending', { signal })),
     getInterfaces: (signal) => json<InterfacesDocument>('/api/v1/interfaces', { signal }),
     getMIDI: (signal) => json<MIDIDevicesDocument>('/api/v1/midi/devices', { signal }),
+    getPeers: (signal) => json<PeersDocument>('/api/v1/peers', { signal }),
     validateConfig: async (config, signal) => {
       const validation = await json<Validation & { hot_fields: string[] | null; restart_required_fields: string[] | null }>('/api/v1/config/validate', {
         method: 'POST',

@@ -41,6 +41,7 @@ type stubBackend struct {
 	flowsFunc         func(context.Context, FlowPageRequest) (FlowPage, error)
 	mutedFunc         func(context.Context, []string) (FlowOverlay, error)
 	soloedFunc        func(context.Context, []string) (FlowOverlay, error)
+	peersFunc         func(context.Context) (PeersDocument, error)
 }
 
 func (backend *stubBackend) Status(ctx context.Context) (Status, error) {
@@ -181,6 +182,13 @@ func (backend *stubBackend) SetSoloedFlows(ctx context.Context, flowIDs []string
 		return backend.soloedFunc(ctx, flowIDs)
 	}
 	return FlowOverlay{Muted: []string{}, Soloed: append([]string(nil), flowIDs...)}, nil
+}
+
+func (backend *stubBackend) Peers(ctx context.Context) (PeersDocument, error) {
+	if backend.peersFunc != nil {
+		return backend.peersFunc(ctx)
+	}
+	return PeersDocument{Role: "standalone", Nodes: []ConnectedNode{}}, nil
 }
 
 func TestNewHandlerRejectsNilBackend(t *testing.T) {

@@ -110,8 +110,8 @@ func TestManagementRulesCRUDPreservesOrderSecretsAndPublicRevision(t *testing.T)
 		t.Fatalf("Read() error = %v", err)
 	}
 	assertManagementRuleIDs(t, durable.Config.Rules, "third", "second")
-	if durable.Config.Mapping.Seed != configuration.Mapping.Seed || durable.Config.Peer.URL != configuration.Peer.URL {
-		t.Fatalf("rule CRUD changed secrets: seed %q peer %q", durable.Config.Mapping.Seed, durable.Config.Peer.URL)
+	if durable.Config.Mapping.Seed != configuration.Mapping.Seed || durable.Config.Peer.URL != configuration.Peer.URL || durable.Config.Peer.Token != configuration.Peer.Token {
+		t.Fatalf("rule CRUD changed secrets: seed %q peer %q token %q", durable.Config.Mapping.Seed, durable.Config.Peer.URL, durable.Config.Peer.Token)
 	}
 }
 
@@ -317,7 +317,7 @@ func TestManagementRulesRejectOversizeCandidateWithoutSecretOracle(t *testing.T)
 	if backendError.Detail != generic {
 		t.Fatalf("oversize detail = %q, want %q", backendError.Detail, generic)
 	}
-	for _, hidden := range []string{configuration.Mapping.Seed, configuration.Peer.URL} {
+	for _, hidden := range []string{configuration.Mapping.Seed, configuration.Peer.URL, configuration.Peer.Token} {
 		if strings.Contains(backendError.Detail, hidden) {
 			t.Fatalf("oversize detail exposed secret %q", hidden)
 		}
@@ -418,7 +418,7 @@ func TestManagementRulesReconcileExternalHotEditsAndPreserveOverlay(t *testing.T
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
-	if durable.Config.Mapping.Seed != configuration.Mapping.Seed || durable.Config.Peer.URL != configuration.Peer.URL {
+	if durable.Config.Mapping.Seed != configuration.Mapping.Seed || durable.Config.Peer.URL != configuration.Peer.URL || durable.Config.Peer.Token != configuration.Peer.Token {
 		t.Fatal("external-drift reconciliation changed secrets")
 	}
 	if !reflect.DeepEqual(durable.Config, current.Config) {

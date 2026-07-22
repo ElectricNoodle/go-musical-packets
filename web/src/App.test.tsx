@@ -141,4 +141,15 @@ describe('setup assistant', () => {
 		expect(await screen.findByRole('heading', { name: /see what the scheduler accepted/i })).toBeInTheDocument()
 		expect(window.location.pathname).toBe('/viewer')
 	})
+
+	it('navigates to role-aware peer status', async () => {
+		const client = stubClient()
+		const user = userEvent.setup()
+		render(<App client={client} />)
+
+		await user.click(await screen.findByRole('link', { name: 'Peers' }))
+
+		expect(await screen.findByRole('heading', { name: /peer transport at a glance/i })).toBeInTheDocument()
+		expect(window.location.pathname).toBe('/peers')
+	})
 })

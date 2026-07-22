@@ -82,6 +82,9 @@ func TestManagementBackendRedactsAndResolvesSecrets(t *testing.T) {
 	if persisted.Config.Peer.URL != configuration.Peer.URL {
 		t.Fatalf("persisted peer URL = %q, want original secret", persisted.Config.Peer.URL)
 	}
+	if persisted.Config.Peer.Token != configuration.Peer.Token {
+		t.Fatalf("persisted peer token = %q, want original secret", persisted.Config.Peer.Token)
+	}
 	if persisted.Config.Mapping.DefaultState != config.FlowPlay {
 		t.Fatalf("persisted default state = %q, want %q", persisted.Config.Mapping.DefaultState, config.FlowPlay)
 	}
@@ -497,6 +500,11 @@ func TestManagementAPIRejectsConcreteSecretGuessesIdentically(t *testing.T) {
 			guesses: []string{"wss://wrong.example.test/socket?token=not-the-secret", configuration.Peer.URL},
 			set:     func(candidate *config.Config, guess string) { candidate.Peer.URL = guess },
 		},
+		{
+			name:    "peer token",
+			guesses: []string{strings.Repeat("x", len(configuration.Peer.Token)), configuration.Peer.Token},
+			set:     func(candidate *config.Config, guess string) { candidate.Peer.Token = guess },
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -622,7 +630,8 @@ func TestRunMountsManagementAPIOnlyOnLoopbackListener(t *testing.T) {
 		}
 		if persisted.Config.Mapping.DefaultState != config.FlowPlay ||
 			persisted.Config.Mapping.Seed != configuration.Mapping.Seed ||
-			persisted.Config.Peer.URL != configuration.Peer.URL {
+			persisted.Config.Peer.URL != configuration.Peer.URL ||
+			persisted.Config.Peer.Token != configuration.Peer.Token {
 			t.Fatalf("persisted hot update did not preserve secrets: %#v", persisted.Config)
 		}
 		if updatedETag == `"`+persisted.Revision.String()+`"` {
@@ -772,6 +781,7 @@ func managementTestConfig() config.Config {
 	configuration.MIDI.Enabled = false
 	configuration.Mapping.Seed = "management-test-secret-seed"
 	configuration.Peer.URL = "wss://peer.example.test/socket?token=management-secret"
+	configuration.Peer.Token = "management-peer-token"
 	return configuration
 }
 
@@ -807,6 +817,7 @@ func newTestManagementBackend(controller *Controller, ready *atomic.Bool, lifecy
 		ready:      ready,
 		lifecycle:  lifecycle,
 		revisions:  newManagementRevisionCodecWithKey(key),
+		peers:      staticPeerSnapshot{role: string(controller.Current().Config.Instance.Role)},
 	}
 }
 
@@ -846,14 +857,17 @@ func assertManagementConfigRedacted(t *testing.T, got, original config.Config) {
 	if got.Peer.URL != config.RedactedURLValue {
 		t.Fatalf("management peer URL = %q, want redaction placeholder", got.Peer.URL)
 	}
-	if original.Mapping.Seed == config.RedactedValue || original.Peer.URL == config.RedactedURLValue {
+	if got.Peer.Token != config.RedactedValue {
+		t.Fatalf("management peer token = %q, want redaction placeholder", got.Peer.Token)
+	}
+	if original.Mapping.Seed == config.RedactedValue || original.Peer.URL == config.RedactedURLValue || original.Peer.Token == config.RedactedValue {
 		t.Fatal("test configuration does not contain concrete secrets")
 	}
 }
 
 func assertSecretsAbsent(t *testing.T, body []byte, configuration config.Config) {
 	t.Helper()
-	for _, secret := range []string{configuration.Mapping.Seed, configuration.Peer.URL} {
+	for _, secret := range []string{configuration.Mapping.Seed, configuration.Peer.URL, configuration.Peer.Token} {
 		if bytes.Contains(body, []byte(secret)) {
 			t.Fatalf("management response exposed secret %q in %q", secret, body)
 		}

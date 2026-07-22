@@ -15,10 +15,10 @@ class FakeSocket {
 	emit(value: unknown) { this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(value) })) }
 }
 
-function note(id: string, midiNote = 60): LiveNoteEvent {
+function note(id: string, midiNote = 60, origin = 'test-node'): LiveNoteEvent {
 	const accepted = new Date().toISOString()
 	return {
-		id, origin: 'test-node', sequence: 1, mapping_version: 'flow-mode-v1', flow_id: `flow-${id}`,
+		id, origin, sequence: 1, mapping_version: 'flow-mode-v1', flow_id: `flow-${id}`,
 		mode: 'dorian', root: 2, note: midiNote, velocity: 96, duration_ms: 10_000, channel: 3,
 		created_at: accepted, accepted_at: accepted,
 	}
@@ -48,7 +48,7 @@ describe('musical viewer', () => {
 		expect(mapping).not.toBeNull()
 		expect(within(mapping!).getByText('C4')).toBeInTheDocument()
 		expect(within(mapping!).getByText(/D dorian · channel 3/i)).toBeInTheDocument()
-		expect(screen.getByText('1/512 retained · 0 dropped')).toBeInTheDocument()
+		expect(screen.getByText('1/1 visible · 0 dropped')).toBeInTheDocument()
 	})
 
 	it('bounds history and lets the operator pause visual ingestion', async () => {
@@ -58,11 +58,11 @@ describe('musical viewer', () => {
 		const notes = Array.from({ length: 513 }, (_, index) => note(String(index), 48 + index % 24))
 
 		act(() => socket.emit(batch(notes, { note_total: 513 })))
-		expect(screen.getByText('512/512 retained · 0 dropped')).toBeInTheDocument()
+		expect(screen.getByText('512/512 visible · 0 dropped')).toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: 'Pause view' }))
 		act(() => socket.emit(batch([note('paused')], { note_total: 514 })))
-		expect(screen.getByText('512/512 retained · 0 dropped')).toBeInTheDocument()
+		expect(screen.getByText('512/512 visible · 0 dropped')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Resume' })).toHaveAttribute('aria-pressed', 'true')
 	})
 
@@ -78,5 +78,20 @@ describe('musical viewer', () => {
 
 		expect(screen.getByText('20.0/s')).toBeInTheDocument()
 		expect(screen.getByText('2.0/s')).toBeInTheDocument()
+	})
+
+	it('honors a host-node origin filter from the peer workspace', () => {
+		window.history.replaceState(null, '', '/viewer?origin=edge-kitchen')
+		const socket = new FakeSocket()
+		render(<MusicalViewer connect={() => socket} />)
+
+		act(() => socket.emit(batch([
+			note('kitchen', 60, 'edge-kitchen'),
+			note('studio', 64, 'edge-studio'),
+		])))
+
+		expect(screen.getByLabelText('Source')).toHaveValue('edge-kitchen')
+		expect(screen.getByText('1/2 visible · 0 dropped')).toBeInTheDocument()
+		expect(screen.getByText(/source edge-kitchen/i)).toBeInTheDocument()
 	})
 })

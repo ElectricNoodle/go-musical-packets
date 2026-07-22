@@ -44,7 +44,7 @@ func normalizedManagementRoute(path string) string {
 	switch path {
 	case "/api/v1/status", "/api/v1/config", "/api/v1/config/validate", "/api/v1/config/pending",
 		interfacesPath, midiDevicesPath, midiAuditionPath, midiPanicPath,
-		rulesCollectionPath, "/api/v1/flows", "/api/v1/flows/mute", "/api/v1/flows/solo":
+		rulesCollectionPath, peersPath, "/api/v1/flows", "/api/v1/flows/mute", "/api/v1/flows/solo":
 		return path
 	default:
 		if strings.HasPrefix(path, rulesCollectionPath+"/") {

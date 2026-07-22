@@ -84,6 +84,10 @@ export interface Configuration {
   peer: {
     enabled: boolean
     url: string
+    token: string
+    queue_capacity: number
+    maximum_connections: number
+    recent_ttl: string
     reconnect_base: string
     reconnect_limit: string
     stale_after: string
@@ -226,6 +230,53 @@ export interface RulesDocument {
   etag: string
   writable: boolean
   rules: RuleConfig[]
+}
+
+export interface PeerOutbound {
+  enabled: boolean
+  target: string
+  remote_instance?: string
+  state: 'disabled' | 'disconnected' | 'connecting' | 'connected' | 'backoff'
+  protocol_version?: string
+  mapping_version?: string
+  queue: { depth: number, capacity: number }
+  sent_total: number
+  dropped_full: number
+  dropped_stale: number
+  reconnects: number
+  send_rate: number
+  last_sent_at?: string
+  connected_at?: string
+  last_attempt_at?: string
+  next_retry_at?: string
+  rtt_ms: number
+  last_error?: string
+  active_channels: number[]
+}
+
+export interface ConnectedNode {
+  instance_id: string
+  remote_address: string
+  state: 'connected' | 'disconnected'
+  authenticated: boolean
+  protocol_version: string
+  mapping_version: string
+  connected_at: string
+  disconnected_at?: string
+  last_seen_at: string
+  note_rate: number
+  received_total: number
+  accepted_total: number
+  rejected_total: number
+  duplicate_total: number
+  stale_total: number
+  active_channels: number[]
+}
+
+export interface PeersDocument {
+  role: RuntimeRole
+  outbound?: PeerOutbound
+  nodes: ConnectedNode[]
 }
 
 export interface ProblemDocument {
