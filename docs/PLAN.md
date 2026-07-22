@@ -173,6 +173,15 @@ The protocol enforces message limits, strict decoding, version negotiation,
 bearer authentication, restrictive origins, and TLS directly or through a
 trusted reverse proxy.
 
+Peer runtime state is observable without exposing credentials. Edge nodes retain
+the configured target, the identity negotiated with the host, connection and
+backoff state, queue utilization, send rate, last successful send, round-trip
+time, and bounded drop/error counters. Hosts retain a bounded registry of
+connected nodes with negotiated identity and protocol version, remote endpoint,
+authentication state, connection age, last activity, note rate, active channels,
+and bounded accepted/rejected/duplicate/stale counters. Instance IDs and remote
+addresses are management data and must not become Prometheus labels.
+
 ## HTTP and management API
 
 The HTTP listener provides `/metrics`, `/healthz`, `/readyz`, the peer note
@@ -237,7 +246,14 @@ unsaved-change protection. The Go backend remains authoritative for evaluation.
 
 MIDI and peer screens provide device selection/reconnect state, user-facing
 channel labels, audition, active notes, panic, peer identity, events, drops,
-round-trip time, channel policy, and authentication state.
+round-trip time, channel policy, and authentication state. The role-aware peer
+workspace gives an edge a clear destination card showing the configured target,
+negotiated host identity, connection/backoff state, queued and sent events,
+send rate, last send, drops, and RTT. On a host it provides a searchable,
+responsive connected-node view with status, protocol/mapping version, remote
+endpoint, connection age, last activity, note rate, active channels,
+authentication state, and accepted/rejected/duplicate/stale totals. Secrets and
+raw authorization headers are never returned to the browser.
 
 ### Musical viewer
 
@@ -350,7 +366,8 @@ protocol with channel preservation is the current stage-13 frontier.
 10. Management API and transactional configuration.
 11. Frontend foundations, setup assistant, and flow explorer.
 12. Piano roll and musical viewer.
-13. Peer WebSocket protocol with channel preservation.
+13. Peer WebSocket protocol with channel preservation, operational state, and
+    role-aware peer UI.
 14. Host/edge composition.
 15. Security, accessibility, profiling, soak testing, packaging, and operations.
 
@@ -369,7 +386,10 @@ every Note On is eventually stopped or reset.
 Integration tests run sanitized PCAP fixtures through fake MIDI, real in-process
 WebSockets, authentication/version failures, reconnects, stale-event dropping,
 multiple edges, backpressure, metrics, health transitions, graceful shutdown,
-the race detector, and goroutine leak checks.
+the race detector, and goroutine leak checks. Management and frontend tests cover
+edge destination state, bounded counters and queues, host connected-node
+lifecycles, disconnect/reconnect transitions, channel activity, safe URL/error
+presentation, and credential non-disclosure.
 
 Frontend tests use Vitest and React Testing Library for behavior and Playwright
 against a real Go process with fake boundaries. They cover setup, monitoring,
@@ -397,6 +417,10 @@ coverage, dependency vulnerability checks, and reproducible build metadata.
 - USB MIDI is selected automatically and recovered after reconnection.
 - No note remains stuck after shutdown, panic, device loss, or peer loss.
 - Edge nodes reconnect and stream versioned, authenticated note events.
+- Edge operators can see the configured destination, negotiated host, connection
+  state, queued/sent activity, drops, and retry state without exposing secrets.
+- Host operators can inspect a bounded, current view of connected edge nodes,
+  their health, note activity, and channels without unbounded UI or metric state.
 - Originating channels are preserved so remote flows address distinct host
   instruments.
 - Stale disconnected events are dropped.
